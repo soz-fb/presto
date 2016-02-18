@@ -26,16 +26,19 @@ import com.facebook.presto.spi.connector.Connector;
 import com.facebook.presto.spi.connector.ConnectorAccessControl;
 import com.facebook.presto.spi.connector.ConnectorFactory;
 import com.facebook.presto.spi.connector.ConnectorIndexProvider;
+import com.facebook.presto.spi.connector.ConnectorNodePartitioningProvider;
 import com.facebook.presto.spi.connector.ConnectorPageSinkProvider;
 import com.facebook.presto.spi.connector.ConnectorPageSourceProvider;
 import com.facebook.presto.spi.connector.ConnectorRecordSetProvider;
 import com.facebook.presto.spi.connector.ConnectorRecordSinkProvider;
 import com.facebook.presto.spi.connector.ConnectorSplitManager;
+import com.facebook.presto.spi.procedure.Procedure;
 import com.facebook.presto.split.PageSinkManager;
 import com.facebook.presto.split.PageSourceManager;
 import com.facebook.presto.split.RecordPageSinkProvider;
 import com.facebook.presto.split.RecordPageSourceProvider;
 import com.facebook.presto.split.SplitManager;
+import com.facebook.presto.sql.planner.NodePartitioningManager;
 import com.facebook.presto.transaction.LegacyTransactionConnectorFactory;
 import com.facebook.presto.transaction.TransactionManager;
 import io.airlift.log.Logger;
@@ -67,6 +70,7 @@ public class ConnectorManager
     private final SplitManager splitManager;
     private final PageSourceManager pageSourceManager;
     private final IndexManager indexManager;
+    private final NodePartitioningManager nodePartitioningManager;
 
     private final PageSinkManager pageSinkManager;
     private final HandleResolver handleResolver;
@@ -86,6 +90,7 @@ public class ConnectorManager
             SplitManager splitManager,
             PageSourceManager pageSourceManager,
             IndexManager indexManager,
+            NodePartitioningManager nodePartitioningManager,
             PageSinkManager pageSinkManager,
             HandleResolver handleResolver,
             NodeManager nodeManager,
@@ -96,6 +101,7 @@ public class ConnectorManager
         this.splitManager = splitManager;
         this.pageSourceManager = pageSourceManager;
         this.indexManager = indexManager;
+        this.nodePartitioningManager = nodePartitioningManager;
         this.pageSinkManager = pageSinkManager;
         this.handleResolver = handleResolver;
         this.nodeManager = nodeManager;
@@ -120,6 +126,7 @@ public class ConnectorManager
         }
     }
 
+    @Deprecated
     public void addConnectorFactory(com.facebook.presto.spi.ConnectorFactory connectorFactory)
     {
         addConnectorFactory(new LegacyTransactionConnectorFactory(connectorFactory));
@@ -130,6 +137,7 @@ public class ConnectorManager
         checkState(!stopped.get(), "ConnectorManager is stopped");
         ConnectorFactory existingConnectorFactory = connectorFactories.putIfAbsent(connectorFactory.getName(), connectorFactory);
         checkArgument(existingConnectorFactory == null, "Connector %s is already registered", connectorFactory.getName());
+        handleResolver.addConnectorName(connectorFactory.getName(), connectorFactory.getHandleResolver());
     }
 
     public void createConnection(String catalogName, String connectorName, Map<String, String> properties)
@@ -140,12 +148,7 @@ public class ConnectorManager
         createConnection(catalogName, connectorFactory, properties);
     }
 
-    public void createConnection(String catalogName, com.facebook.presto.spi.ConnectorFactory connectorFactory, Map<String, String> properties)
-    {
-        createConnection(catalogName, new LegacyTransactionConnectorFactory(connectorFactory), properties);
-    }
-
-    public synchronized void createConnection(String catalogName, ConnectorFactory connectorFactory, Map<String, String> properties)
+    private synchronized void createConnection(String catalogName, ConnectorFactory connectorFactory, Map<String, String> properties)
     {
         checkState(!stopped.get(), "ConnectorManager is stopped");
         requireNonNull(catalogName, "catalogName is null");
@@ -156,28 +159,19 @@ public class ConnectorManager
         String connectorId = getConnectorId(catalogName);
         checkState(!connectors.containsKey(connectorId), "A connector %s already exists", connectorId);
 
-        Class<?> connectorFactoryClass = connectorFactory.getClass();
-        if (connectorFactory instanceof LegacyTransactionConnectorFactory) {
-            connectorFactoryClass = ((LegacyTransactionConnectorFactory) connectorFactory).getConnectorFactory().getClass();
-        }
-
-        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(connectorFactoryClass.getClassLoader())) {
-            Connector connector = connectorFactory.create(connectorId, properties);
-            addCatalogConnector(catalogName, connectorId, connectorFactory, properties);
-        }
+        addCatalogConnector(catalogName, connectorId, connectorFactory, properties);
 
         catalogs.add(catalogName);
     }
 
     private synchronized void addCatalogConnector(String catalogName, String connectorId, ConnectorFactory factory, Map<String, String> properties)
     {
-        Connector connector = factory.create(connectorId, properties);
+        Connector connector = createConnector(connectorId, factory, properties);
 
         addConnectorInternal(ConnectorType.STANDARD, catalogName, connectorId, connector);
-        handleResolver.addConnectorName(factory.getName(), factory.getHandleResolver());
 
         String informationSchemaId = makeInformationSchemaConnectorId(connectorId);
-        addConnectorInternal(ConnectorType.INFORMATION_SCHEMA, catalogName, informationSchemaId, new InformationSchemaConnector(informationSchemaId, catalogName, nodeManager, metadataManager));
+        addConnectorInternal(ConnectorType.INFORMATION_SCHEMA, catalogName, informationSchemaId, new InformationSchemaConnector(catalogName, nodeManager, metadataManager));
 
         String systemId = makeSystemTablesConnectorId(connectorId);
         addConnectorInternal(ConnectorType.SYSTEM, catalogName, systemId, new SystemConnector(
@@ -202,6 +196,9 @@ public class ConnectorManager
 
         Set<SystemTable> systemTables = connector.getSystemTables();
         requireNonNull(systemTables, "Connector %s returned a null system tables set");
+
+        Set<Procedure> procedures = connector.getProcedures();
+        requireNonNull(procedures, "Connector %s returned a null procedures set");
 
         ConnectorPageSourceProvider connectorPageSourceProvider = null;
         try {
@@ -250,8 +247,13 @@ public class ConnectorManager
         catch (UnsupportedOperationException ignored) {
         }
 
-        requireNonNull(connector.getSessionProperties(), format("Connector %s returned null session properties", connectorId));
-        requireNonNull(connector.getTableProperties(), format("Connector %s returned null table properties", connectorId));
+        ConnectorNodePartitioningProvider partitioningProvider = null;
+        try {
+            partitioningProvider = connector.getNodePartitioningProvider();
+            requireNonNull(partitioningProvider, format("Connector %s returned a null partitioning provider", connectorId));
+        }
+        catch (UnsupportedOperationException ignored) {
+        }
 
         ConnectorAccessControl accessControl = null;
         try {
@@ -281,6 +283,10 @@ public class ConnectorManager
         splitManager.addConnectorSplitManager(connectorId, connectorSplitManager);
         pageSourceManager.addConnectorPageSourceProvider(connectorId, connectorPageSourceProvider);
 
+        for (Procedure procedure : procedures) {
+            metadataManager.getProcedureRegistry().addProcedure(catalogName, procedure);
+        }
+
         if (connectorPageSinkProvider != null) {
             pageSinkManager.addConnectorPageSinkProvider(connectorId, connectorPageSinkProvider);
         }
@@ -289,8 +295,24 @@ public class ConnectorManager
             indexManager.addIndexProvider(connectorId, indexProvider);
         }
 
+        if (partitioningProvider != null) {
+            nodePartitioningManager.addPartitioningProvider(connectorId, partitioningProvider);
+        }
+
         if (accessControl != null) {
             accessControlManager.addCatalogAccessControl(connectorId, catalogName, accessControl);
+        }
+    }
+
+    private static Connector createConnector(String connectorId, ConnectorFactory factory, Map<String, String> properties)
+    {
+        Class<?> factoryClass = factory.getClass();
+        if (factory instanceof LegacyTransactionConnectorFactory) {
+            factoryClass = ((LegacyTransactionConnectorFactory) factory).getConnectorFactory().getClass();
+        }
+
+        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(factoryClass.getClassLoader())) {
+            return factory.create(connectorId, properties);
         }
     }
 

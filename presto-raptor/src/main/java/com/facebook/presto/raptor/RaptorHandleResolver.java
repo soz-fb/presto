@@ -20,6 +20,8 @@ import com.facebook.presto.spi.ConnectorOutputTableHandle;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
+import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
+import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 
 public class RaptorHandleResolver
         implements ConnectorHandleResolver
@@ -58,5 +60,17 @@ public class RaptorHandleResolver
     public Class<? extends ConnectorInsertTableHandle> getInsertTableHandleClass()
     {
         return RaptorInsertTableHandle.class;
+    }
+
+    @Override
+    public Class<? extends ConnectorTransactionHandle> getTransactionHandleClass()
+    {
+        return RaptorTransactionHandle.class;
+    }
+
+    @Override
+    public Class<? extends ConnectorPartitioningHandle> getPartitioningHandleClass()
+    {
+        return RaptorPartitioningHandle.class;
     }
 }

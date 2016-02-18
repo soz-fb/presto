@@ -23,6 +23,7 @@ import com.facebook.presto.spi.ConnectorOutputTableHandle;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
+import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 
 import javax.inject.Inject;
@@ -64,11 +65,6 @@ public class HandleResolver
 
     public String getId(ConnectorTableLayoutHandle handle)
     {
-        if (handle instanceof LegacyTableLayoutHandle) {
-            ConnectorTableHandle table = ((LegacyTableLayoutHandle) handle).getTable();
-            return getId(table, ConnectorHandleResolver::getTableHandleClass);
-        }
-
         return getId(handle, ConnectorHandleResolver::getTableLayoutHandleClass);
     }
 
@@ -97,6 +93,11 @@ public class HandleResolver
         return getId(insertHandle, ConnectorHandleResolver::getInsertTableHandleClass);
     }
 
+    public String getId(ConnectorPartitioningHandle partitioningHandle)
+    {
+        return getId(partitioningHandle, ConnectorHandleResolver::getPartitioningHandleClass);
+    }
+
     public String getId(ConnectorTransactionHandle transactionHandle)
     {
         return getId(transactionHandle, ConnectorHandleResolver::getTransactionHandleClass);
@@ -109,12 +110,7 @@ public class HandleResolver
 
     public Class<? extends ConnectorTableLayoutHandle> getTableLayoutHandleClass(String id)
     {
-        try {
-            return resolverFor(id).getTableLayoutHandleClass();
-        }
-        catch (UnsupportedOperationException e) {
-            return LegacyTableLayoutHandle.class;
-        }
+        return resolverFor(id).getTableLayoutHandleClass();
     }
 
     public Class<? extends ColumnHandle> getColumnHandleClass(String id)
@@ -140,6 +136,11 @@ public class HandleResolver
     public Class<? extends ConnectorInsertTableHandle> getInsertTableHandleClass(String id)
     {
         return resolverFor(id).getInsertTableHandleClass();
+    }
+
+    public Class<? extends ConnectorPartitioningHandle> getPartitioningHandleClass(String id)
+    {
+        return resolverFor(id).getPartitioningHandleClass();
     }
 
     public Class<? extends ConnectorTransactionHandle> getTransactionHandleClass(String id)

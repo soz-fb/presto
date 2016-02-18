@@ -21,6 +21,8 @@ import com.facebook.presto.spi.ConnectorOutputTableHandle;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
+import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
+import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 
 public final class BlackHoleHandleResolver
         implements ConnectorHandleResolver
@@ -59,5 +61,17 @@ public final class BlackHoleHandleResolver
     public Class<? extends ConnectorTableLayoutHandle> getTableLayoutHandleClass()
     {
         return BlackHoleTableLayoutHandle.class;
+    }
+
+    @Override
+    public Class<? extends ConnectorTransactionHandle> getTransactionHandleClass()
+    {
+        return BlackHoleTransactionHandle.class;
+    }
+
+    @Override
+    public Class<? extends ConnectorPartitioningHandle> getPartitioningHandleClass()
+    {
+        return BlackHolePartitioningHandle.class;
     }
 }

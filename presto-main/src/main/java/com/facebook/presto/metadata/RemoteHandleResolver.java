@@ -17,14 +17,23 @@ import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.ConnectorTableHandle;
+import com.facebook.presto.spi.ConnectorTableLayoutHandle;
+import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 import com.facebook.presto.split.RemoteSplit;
+import com.facebook.presto.sql.planner.SystemPartitioningHandle;
 
 public class RemoteHandleResolver
         implements ConnectorHandleResolver
 {
     @Override
     public Class<? extends ConnectorTableHandle> getTableHandleClass()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Class<? extends ConnectorTableLayoutHandle> getTableLayoutHandleClass()
     {
         throw new UnsupportedOperationException();
     }
@@ -45,5 +54,11 @@ public class RemoteHandleResolver
     public Class<? extends ConnectorTransactionHandle> getTransactionHandleClass()
     {
         return RemoteTransactionHandle.class;
+    }
+
+    @Override
+    public Class<? extends ConnectorPartitioningHandle> getPartitioningHandleClass()
+    {
+        return SystemPartitioningHandle.class;
     }
 }

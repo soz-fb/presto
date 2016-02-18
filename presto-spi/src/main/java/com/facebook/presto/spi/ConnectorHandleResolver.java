@@ -13,16 +13,14 @@
  */
 package com.facebook.presto.spi;
 
+import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 
 public interface ConnectorHandleResolver
 {
     Class<? extends ConnectorTableHandle> getTableHandleClass();
 
-    default Class<? extends ConnectorTableLayoutHandle> getTableLayoutHandleClass()
-    {
-        throw new UnsupportedOperationException();
-    }
+    Class<? extends ConnectorTableLayoutHandle> getTableLayoutHandleClass();
 
     Class<? extends ColumnHandle> getColumnHandleClass();
 
@@ -39,6 +37,11 @@ public interface ConnectorHandleResolver
     }
 
     default Class<? extends ConnectorInsertTableHandle> getInsertTableHandleClass()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    default Class<? extends ConnectorPartitioningHandle> getPartitioningHandleClass()
     {
         throw new UnsupportedOperationException();
     }
