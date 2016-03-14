@@ -84,7 +84,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.SetMultimap;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -315,7 +314,6 @@ public class AddExchanges
             }
         }
 
-        @NotNull
         private PlanWithProperties splitAggregation(AggregationNode node, PlanWithProperties newChild, Function<PlanNode, PlanNode> exchanger)
         {
             // otherwise, add a partial and final with an exchange in between
@@ -790,7 +788,7 @@ public class AddExchanges
                 left = node.getLeft().accept(this, context.withPreferredProperties(PreferredProperties.hashPartitioned(leftSymbols)));
                 right = node.getRight().accept(this, context.withPreferredProperties(PreferredProperties.hashPartitioned(rightSymbols)));
 
-                if (!left.getProperties().isNodePartitionedOn(leftSymbols)) {
+                if (!left.getProperties().isNodePartitionedOn(leftSymbols) || (distributedJoins && left.getProperties().isSingleNode())) {
                     left = withDerivedProperties(
                             partitionedExchange(idAllocator.getNextId(), left.getNode(), leftSymbols, node.getLeftHashSymbol()),
                             left.getProperties());
