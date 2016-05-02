@@ -17,11 +17,12 @@ import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.planner.optimizations.AddExchanges;
-import com.facebook.presto.sql.planner.optimizations.AddIntermediateAggregation;
+import com.facebook.presto.sql.planner.optimizations.AddLocalExchanges;
 import com.facebook.presto.sql.planner.optimizations.BeginTableWrite;
 import com.facebook.presto.sql.planner.optimizations.CanonicalizeExpressions;
 import com.facebook.presto.sql.planner.optimizations.CountConstantOptimizer;
 import com.facebook.presto.sql.planner.optimizations.DesugaringOptimizer;
+import com.facebook.presto.sql.planner.optimizations.EmptyDeleteOptimizer;
 import com.facebook.presto.sql.planner.optimizations.HashGenerationOptimizer;
 import com.facebook.presto.sql.planner.optimizations.ImplementSampleAsFilter;
 import com.facebook.presto.sql.planner.optimizations.IndexJoinOptimizer;
@@ -93,10 +94,11 @@ public class PlanOptimizersFactory
         if (!forceSingleNode) {
             builder.add(new PushTableWriteThroughUnion()); // Must run before AddExchanges
             builder.add(new AddExchanges(metadata, sqlParser));
-            builder.add(new AddIntermediateAggregation(metadata)); // Must run after AddExchanges
         }
 
         builder.add(new PickLayout(metadata));
+
+        builder.add(new EmptyDeleteOptimizer()); // Run after table scan is removed by PickLayout
 
         builder.add(new PredicatePushDown(metadata, sqlParser)); // Run predicate push down one more time in case we can leverage new information from layouts' effective predicate
         builder.add(new ProjectionPushDown());
@@ -104,6 +106,9 @@ public class PlanOptimizersFactory
         builder.add(new UnaliasSymbolReferences()); // Run unalias after merging projections to simplify projections more efficiently
         builder.add(new PruneUnreferencedOutputs());
         builder.add(new PruneIdentityProjections());
+
+        // Optimizers above this don't understand local exchanges, so be careful moving this.
+        builder.add(new AddLocalExchanges(metadata, sqlParser));
 
         // DO NOT add optimizers that change the plan shape (computations) after this point
 

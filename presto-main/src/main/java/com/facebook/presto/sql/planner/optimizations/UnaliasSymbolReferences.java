@@ -28,6 +28,7 @@ import com.facebook.presto.sql.planner.plan.DeleteNode;
 import com.facebook.presto.sql.planner.plan.DistinctLimitNode;
 import com.facebook.presto.sql.planner.plan.EnforceSingleRowNode;
 import com.facebook.presto.sql.planner.plan.ExchangeNode;
+import com.facebook.presto.sql.planner.plan.ExplainAnalyzeNode;
 import com.facebook.presto.sql.planner.plan.FilterNode;
 import com.facebook.presto.sql.planner.plan.GroupIdNode;
 import com.facebook.presto.sql.planner.plan.IndexJoinNode;
@@ -94,7 +95,7 @@ import static java.util.Objects.requireNonNull;
  * {@code Output[$2, $1] -> Project[$2, $1 := $3 * 100] -> Aggregate[$2, $3 := sum($4)] -> ...}
  */
 public class UnaliasSymbolReferences
-        extends PlanOptimizer
+        implements PlanOptimizer
 {
     @Override
     public PlanNode optimize(PlanNode plan, Session session, Map<Symbol, Type> types, SymbolAllocator symbolAllocator, PlanNodeIdAllocator idAllocator)
@@ -133,6 +134,10 @@ public class UnaliasSymbolReferences
             }
 
             List<Symbol> groupByKeys = canonicalizeAndDistinct(node.getGroupBy());
+            List<List<Symbol>> groupingSets = node.getGroupingSets().stream()
+                    .map(this::canonicalizeAndDistinct)
+                    .collect(toImmutableList());
+
             return new AggregationNode(
                     node.getId(),
                     source,
@@ -140,6 +145,7 @@ public class UnaliasSymbolReferences
                     functionCalls.build(),
                     functionInfos.build(),
                     masks.build(),
+                    groupingSets,
                     node.getStep(),
                     canonicalize(node.getSampleWeight()),
                     node.getConfidence(),
@@ -155,6 +161,13 @@ public class UnaliasSymbolReferences
                     .collect(Collectors.toList());
 
             return new GroupIdNode(node.getId(), source, canonicalize(node.getInputSymbols()), groupingSetsSymbols, canonicalize(node.getGroupIdSymbol()));
+        }
+
+        @Override
+        public PlanNode visitExplainAnalyze(ExplainAnalyzeNode node, RewriteContext<Void> context)
+        {
+            PlanNode source = context.rewrite(node.getSource());
+            return new ExplainAnalyzeNode(node.getId(), source, canonicalize(node.getOutputSymbol()));
         }
 
         @Override
@@ -263,7 +276,7 @@ public class UnaliasSymbolReferences
                     node.getPartitionFunction().isReplicateNulls(),
                     node.getPartitionFunction().getBucketToPartition());
 
-            return new ExchangeNode(node.getId(), node.getType(), partitionFunction, sources, inputs);
+            return new ExchangeNode(node.getId(), node.getType(), node.getScope(), partitionFunction, sources, inputs);
         }
 
         @Override
@@ -281,7 +294,7 @@ public class UnaliasSymbolReferences
         @Override
         public PlanNode visitDistinctLimit(DistinctLimitNode node, RewriteContext<Void> context)
         {
-            return new DistinctLimitNode(node.getId(), context.rewrite(node.getSource()), node.getLimit(), canonicalize(node.getHashSymbol()));
+            return new DistinctLimitNode(node.getId(), context.rewrite(node.getSource()), node.getLimit(), node.isPartial(), canonicalize(node.getHashSymbol()));
         }
 
         @Override

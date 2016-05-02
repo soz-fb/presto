@@ -32,7 +32,7 @@ import java.util.Map;
 import static java.util.Objects.requireNonNull;
 
 public class SetFlatteningOptimizer
-        extends PlanOptimizer
+        implements PlanOptimizer
 {
     @Override
     public PlanNode optimize(PlanNode plan, Session session, Map<Symbol, Type> types, SymbolAllocator symbolAllocator, PlanNodeIdAllocator idAllocator)
@@ -103,6 +103,7 @@ public class SetFlatteningOptimizer
                     node.getAggregations(),
                     node.getFunctions(),
                     node.getMasks(),
+                    node.getGroupingSets(),
                     node.getStep(),
                     node.getSampleWeight(),
                     node.getConfidence(),

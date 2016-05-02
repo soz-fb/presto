@@ -91,7 +91,7 @@ import static com.google.common.collect.Iterables.transform;
 import static java.util.Objects.requireNonNull;
 
 public class PredicatePushDown
-        extends PlanOptimizer
+        implements PlanOptimizer
 {
     private static final Logger log = Logger.get(PredicatePushDown.class);
 
@@ -180,6 +180,7 @@ public class PredicatePushDown
                 return new ExchangeNode(
                         node.getId(),
                         node.getType(),
+                        node.getScope(),
                         node.getPartitionFunction(),
                         builder.build(),
                         node.getInputs());
@@ -809,6 +810,7 @@ public class PredicatePushDown
                         node.getAggregations(),
                         node.getFunctions(),
                         node.getMasks(),
+                        node.getGroupingSets(),
                         node.getStep(),
                         node.getSampleWeight(),
                         node.getConfidence(),

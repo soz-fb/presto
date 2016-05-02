@@ -10,7 +10,6 @@ CREATE TABLE presto_test_types_textfile (
 , t_timestamp TIMESTAMP
 , t_binary BINARY
 , t_date DATE
-, t_varchar VARCHAR(50)
 , t_char CHAR(25)
 , t_map MAP<STRING, STRING>
 , t_array_string ARRAY<STRING>
@@ -83,6 +82,7 @@ SELECT * FROM presto_test_types_textfile
 
 
 -- Parquet fails when trying to use complex nested types.
+-- Parquet is missing TIMESTAMP and BINARY.
 CREATE TABLE presto_test_types_parquet (
   t_string STRING
 , t_tinyint TINYINT

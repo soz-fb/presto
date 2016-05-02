@@ -39,8 +39,8 @@ public class TestVerifierConfig
                 .setControlPasswordOverride(null)
                 .setSuite(null)
                 .setSuites(null)
-                .setControlQueryTypes(Joiner.on(",").join(CREATE, READ, MODIFY))
-                .setTestQueryTypes(Joiner.on(",").join(CREATE, READ, MODIFY))
+                .setControlQueryTypes(READ.name())
+                .setTestQueryTypes(READ.name())
                 .setSource(null)
                 .setRunId(new DateTime().toString("yyyy-MM-dd"))
                 .setEventClients("human-readable")
@@ -71,7 +71,9 @@ public class TestVerifierConfig
                 .setTestJdbcDriverName(null)
                 .setControlJdbcDriverName(null)
                 .setDoublePrecision(3)
-                .setRegressionMinCpuTime(new Duration(5, TimeUnit.MINUTES)));
+                .setRegressionMinCpuTime(new Duration(5, TimeUnit.MINUTES))
+                .setControlTeardownRetries(1)
+                .setTestTeardownRetries(1));
     }
 
     @Test
@@ -80,7 +82,7 @@ public class TestVerifierConfig
         Map<String, String> properties = new ImmutableMap.Builder<String, String>()
                 .put("suites", "my_suite")
                 .put("suite", "my_suite")
-                .put("control.query-types", READ.name())
+                .put("control.query-types", Joiner.on(",").join(CREATE, READ))
                 .put("test.query-types", MODIFY.name())
                 .put("source", "my_source")
                 .put("run-id", "my_run_id")
@@ -117,12 +119,14 @@ public class TestVerifierConfig
                 .put("control.jdbc-driver-class", "com.facebook.exampleclass")
                 .put("expected-double-precision", "5")
                 .put("regression.min-cpu-time", "30s")
+                .put("control.teardown-retries", "5")
+                .put("test.teardown-retries", "7")
                 .build();
 
         VerifierConfig expected = new VerifierConfig().setTestUsernameOverride("verifier-test")
                 .setSuites("my_suite")
                 .setSuite("my_suite")
-                .setControlQueryTypes(READ.name())
+                .setControlQueryTypes(Joiner.on(",").join(CREATE, READ))
                 .setTestQueryTypes(MODIFY.name())
                 .setSource("my_source")
                 .setRunId("my_run_id")
@@ -158,7 +162,9 @@ public class TestVerifierConfig
                 .setTestJdbcDriverName("com.facebook.exampleclass")
                 .setControlJdbcDriverName("com.facebook.exampleclass")
                 .setDoublePrecision(5)
-                .setRegressionMinCpuTime(new Duration(30, TimeUnit.SECONDS));
+                .setRegressionMinCpuTime(new Duration(30, TimeUnit.SECONDS))
+                .setControlTeardownRetries(5)
+                .setTestTeardownRetries(7);
 
         ConfigAssertions.assertFullMapping(properties, expected);
     }

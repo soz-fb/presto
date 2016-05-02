@@ -37,6 +37,7 @@ import com.facebook.presto.sql.tree.CreateTableAsSelect;
 import com.facebook.presto.sql.tree.CreateView;
 import com.facebook.presto.sql.tree.Cube;
 import com.facebook.presto.sql.tree.CurrentTime;
+import com.facebook.presto.sql.tree.DecimalLiteral;
 import com.facebook.presto.sql.tree.Delete;
 import com.facebook.presto.sql.tree.DereferenceExpression;
 import com.facebook.presto.sql.tree.DoubleLiteral;
@@ -99,6 +100,7 @@ import com.facebook.presto.sql.tree.SelectItem;
 import com.facebook.presto.sql.tree.SetSession;
 import com.facebook.presto.sql.tree.ShowCatalogs;
 import com.facebook.presto.sql.tree.ShowColumns;
+import com.facebook.presto.sql.tree.ShowCreate;
 import com.facebook.presto.sql.tree.ShowFunctions;
 import com.facebook.presto.sql.tree.ShowPartitions;
 import com.facebook.presto.sql.tree.ShowSchemas;
@@ -192,6 +194,12 @@ class AstBuilder
             }
         }
         return properties.build();
+    }
+
+    @Override
+    public Node visitShowCreateTable(SqlBaseParser.ShowCreateTableContext context)
+    {
+        return new ShowCreate(getLocation(context), ShowCreate.Type.TABLE, getQualifiedName(context.qualifiedName()));
     }
 
     @Override
@@ -340,7 +348,7 @@ class AstBuilder
     @Override
     public Node visitNamedQuery(SqlBaseParser.NamedQueryContext context)
     {
-        return new WithQuery(getLocation(context), context.name.getText(), (Query) visit(context.query()), getColumnAliases(context.columnAliases()));
+        return new WithQuery(getLocation(context), context.name.getText(), (Query) visit(context.query()), Optional.ofNullable(getColumnAliases(context.columnAliases())));
     }
 
     @Override
@@ -553,13 +561,19 @@ class AstBuilder
     @Override
     public Node visitShowSchemas(SqlBaseParser.ShowSchemasContext context)
     {
-        return new ShowSchemas(getLocation(context), getTextIfPresent(context.identifier()));
+        return new ShowSchemas(
+                getLocation(context),
+                getTextIfPresent(context.identifier()),
+                getTextIfPresent(context.pattern)
+                        .map(AstBuilder::unquote));
     }
 
     @Override
     public Node visitShowCatalogs(SqlBaseParser.ShowCatalogsContext context)
     {
-        return new ShowCatalogs(getLocation(context));
+        return new ShowCatalogs(getLocation(context),
+                getTextIfPresent(context.pattern)
+                        .map(AstBuilder::unquote));
     }
 
     @Override
@@ -577,6 +591,12 @@ class AstBuilder
                 visitIfPresent(context.booleanExpression(), Expression.class),
                 visit(context.sortItem(), SortItem.class),
                 getTextIfPresent(context.limit));
+    }
+
+    @Override
+    public Node visitShowCreateView(SqlBaseParser.ShowCreateViewContext context)
+    {
+        return new ShowCreate(getLocation(context), ShowCreate.Type.VIEW, getQualifiedName(context.qualifiedName()));
     }
 
     @Override
@@ -1207,6 +1227,9 @@ class AstBuilder
         if (type.equalsIgnoreCase("timestamp")) {
             return new TimestampLiteral(getLocation(context), value);
         }
+        if (type.equalsIgnoreCase("decimal")) {
+            return new DecimalLiteral(getLocation(context), value);
+        }
 
         return new GenericLiteral(getLocation(context), type, value);
     }
@@ -1536,6 +1559,20 @@ class AstBuilder
 
         if (type.MAP() != null) {
             return "MAP(" + getType(type.type(0)) + "," + getType(type.type(1)) + ")";
+        }
+
+        if (type.ROW() != null) {
+            StringBuilder builder = new StringBuilder("(");
+            for (int i = 0; i < type.identifier().size(); i++) {
+                if (i != 0) {
+                    builder.append(",");
+                }
+                builder.append(type.identifier(i).getText())
+                        .append(" ")
+                        .append(getType(type.type(i)));
+            }
+            builder.append(")");
+            return "ROW" + builder.toString();
         }
 
         throw new IllegalArgumentException("Unsupported type specification: " + type.getText());
