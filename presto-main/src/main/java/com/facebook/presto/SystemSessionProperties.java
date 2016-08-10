@@ -53,10 +53,10 @@ public final class SystemSessionProperties
     public static final String REDISTRIBUTE_WRITES = "redistribute_writes";
     public static final String PUSH_TABLE_WRITE_THROUGH_UNION = "push_table_write_through_union";
     public static final String EXECUTION_POLICY = "execution_policy";
-    public static final String COLUMNAR_PROCESSING = "columnar_processing";
-    public static final String COLUMNAR_PROCESSING_DICTIONARY = "columnar_processing_dictionary";
+    public static final String PROCESSING_OPTIMIZATION = "processing_optimization";
     public static final String DICTIONARY_AGGREGATION = "dictionary_aggregation";
     public static final String PLAN_WITH_TABLE_NODE_PARTITIONING = "plan_with_table_node_partitioning";
+    public static final String COLOCATED_JOIN = "colocated_join";
     public static final String INITIAL_SPLITS_PER_NODE = "initial_splits_per_node";
     public static final String SPLIT_CONCURRENCY_ADJUSTMENT_INTERVAL = "split_concurrency_adjustment_interval";
     public static final String OPTIMIZE_METADATA_QUERIES = "optimize_metadata_queries";
@@ -176,15 +176,10 @@ public final class SystemSessionProperties
                         "Use resources which are not guaranteed to be available to the query",
                         false,
                         false),
-                booleanSessionProperty(
-                        COLUMNAR_PROCESSING,
-                        "Use columnar processing",
-                        featuresConfig.isColumnarProcessing(),
-                        false),
-                booleanSessionProperty(
-                        COLUMNAR_PROCESSING_DICTIONARY,
-                        "Use columnar processing with optimizations for dictionaries",
-                        featuresConfig.isColumnarProcessingDictionary(),
+                stringSessionProperty(
+                        PROCESSING_OPTIMIZATION,
+                        "Type of optimization for query processing",
+                        featuresConfig.getProcessingOptimization(),
                         false),
                 booleanSessionProperty(
                         DICTIONARY_AGGREGATION,
@@ -219,6 +214,11 @@ public final class SystemSessionProperties
                         PLAN_WITH_TABLE_NODE_PARTITIONING,
                         "Experimental: Adapt plan to pre-partitioned tables",
                         true,
+                        false),
+                booleanSessionProperty(
+                        COLOCATED_JOIN,
+                        "Experimental: Use a colocated join when possible",
+                        featuresConfig.isColocatedJoinsEnabled(),
                         false));
     }
 
@@ -282,14 +282,9 @@ public final class SystemSessionProperties
         return session.getProperty(TASK_SHARE_INDEX_LOADING, Boolean.class);
     }
 
-    public static boolean isColumnarProcessingEnabled(Session session)
+    public static String getProcessingOptimization(Session session)
     {
-        return session.getProperty(COLUMNAR_PROCESSING, Boolean.class);
-    }
-
-    public static boolean isColumnarProcessingDictionaryEnabled(Session session)
-    {
-        return session.getProperty(COLUMNAR_PROCESSING_DICTIONARY, Boolean.class);
+        return session.getProperty(PROCESSING_OPTIMIZATION, String.class);
     }
 
     public static boolean isDictionaryAggregationEnabled(Session session)
@@ -320,6 +315,11 @@ public final class SystemSessionProperties
     public static boolean planWithTableNodePartitioning(Session session)
     {
         return session.getProperty(PLAN_WITH_TABLE_NODE_PARTITIONING, Boolean.class);
+    }
+
+    public static boolean isColocatedJoinEnabled(Session session)
+    {
+        return session.getProperty(COLOCATED_JOIN, Boolean.class);
     }
 
     public static int getInitialSplitsPerNode(Session session)

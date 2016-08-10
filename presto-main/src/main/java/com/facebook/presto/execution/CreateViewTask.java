@@ -18,15 +18,12 @@ import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.QualifiedObjectName;
 import com.facebook.presto.metadata.ViewDefinition;
 import com.facebook.presto.security.AccessControl;
-import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.sql.analyzer.Analysis;
 import com.facebook.presto.sql.analyzer.Analyzer;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.sql.analyzer.QueryExplainer;
-import com.facebook.presto.sql.parser.ParsingException;
 import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.tree.CreateView;
-import com.facebook.presto.sql.tree.Query;
 import com.facebook.presto.sql.tree.Statement;
 import com.facebook.presto.transaction.TransactionManager;
 import io.airlift.json.JsonCodec;
@@ -39,8 +36,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static com.facebook.presto.metadata.MetadataUtil.createQualifiedObjectName;
 import static com.facebook.presto.metadata.ViewDefinition.ViewColumn;
-import static com.facebook.presto.spi.StandardErrorCode.INTERNAL_ERROR;
-import static com.facebook.presto.sql.SqlFormatter.formatSql;
+import static com.facebook.presto.sql.SqlFormatterUtil.getFormattedSql;
 import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.CompletableFuture.completedFuture;
@@ -50,7 +46,6 @@ public class CreateViewTask
 {
     private final JsonCodec<ViewDefinition> codec;
     private final SqlParser sqlParser;
-    private final AccessControl accessControl;
     private final boolean experimentalSyntaxEnabled;
 
     @Inject
@@ -62,7 +57,6 @@ public class CreateViewTask
     {
         this.codec = requireNonNull(codec, "codec is null");
         this.sqlParser = requireNonNull(sqlParser, "sqlParser is null");
-        this.accessControl = requireNonNull(accessControl, "accessControl is null");
         requireNonNull(featuresConfig, "featuresConfig is null");
         this.experimentalSyntaxEnabled = featuresConfig.isExperimentalSyntaxEnabled();
     }
@@ -87,9 +81,9 @@ public class CreateViewTask
 
         accessControl.checkCanCreateView(session.getRequiredTransactionId(), session.getIdentity(), name);
 
-        String sql = getFormattedSql(statement);
+        String sql = getFormattedSql(statement.getQuery(), sqlParser);
 
-        Analysis analysis = analyzeStatement(statement, session, metadata);
+        Analysis analysis = analyzeStatement(statement, session, metadata, accessControl);
 
         List<ViewColumn> columns = analysis.getOutputDescriptor()
                 .getVisibleFields().stream()
@@ -103,29 +97,9 @@ public class CreateViewTask
         return completedFuture(null);
     }
 
-    private Analysis analyzeStatement(Statement statement, Session session, Metadata metadata)
+    private Analysis analyzeStatement(Statement statement, Session session, Metadata metadata, AccessControl accessControl)
     {
         Analyzer analyzer = new Analyzer(session, metadata, sqlParser, accessControl, Optional.<QueryExplainer>empty(), experimentalSyntaxEnabled);
         return analyzer.analyze(statement);
-    }
-
-    private String getFormattedSql(CreateView statement)
-    {
-        Query query = statement.getQuery();
-        String sql = formatSql(query);
-
-        // verify round-trip
-        Statement parsed;
-        try {
-            parsed = sqlParser.createStatement(sql);
-        }
-        catch (ParsingException e) {
-            throw new PrestoException(INTERNAL_ERROR, "Formatted query does not parse: " + query);
-        }
-        if (!query.equals(parsed)) {
-            throw new PrestoException(INTERNAL_ERROR, "Query does not round-trip: " + query);
-        }
-
-        return sql;
     }
 }

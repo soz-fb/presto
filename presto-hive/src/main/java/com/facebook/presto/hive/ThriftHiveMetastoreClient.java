@@ -141,17 +141,10 @@ public class ThriftHiveMetastoreClient
     }
 
     @Override
-    public boolean dropPartitionByName(String databaseName, String tableName, String partitionName, boolean deleteData)
+    public Partition getPartition(String databaseName, String tableName, List<String> partitionValues)
             throws TException
     {
-        return client.drop_partition_by_name(databaseName, tableName, partitionName, deleteData);
-    }
-
-    @Override
-    public Partition getPartitionByName(String databaseName, String tableName, String partitionName)
-            throws TException
-    {
-        return client.get_partition_by_name(databaseName, tableName, partitionName);
+        return client.get_partition(databaseName, tableName, partitionValues);
     }
 
     @Override
@@ -187,5 +180,12 @@ public class ThriftHiveMetastoreClient
             throws TException
     {
         return client.grant_privileges(privilegeBag);
+    }
+
+    @Override
+    public boolean revokePrivileges(PrivilegeBag privilegeBag)
+            throws TException
+    {
+        return client.revoke_privileges(privilegeBag);
     }
 }

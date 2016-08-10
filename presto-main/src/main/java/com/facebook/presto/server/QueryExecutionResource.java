@@ -13,7 +13,6 @@
  */
 package com.facebook.presto.server;
 
-import com.facebook.presto.execution.BufferInfo;
 import com.facebook.presto.execution.QueryId;
 import com.facebook.presto.execution.QueryInfo;
 import com.facebook.presto.execution.QueryManager;
@@ -21,6 +20,7 @@ import com.facebook.presto.execution.StageInfo;
 import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.execution.TaskStatus;
+import com.facebook.presto.execution.buffer.BufferInfo;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import static com.google.common.io.Resources.getResource;
@@ -50,7 +51,7 @@ import static java.util.Objects.requireNonNull;
 public class QueryExecutionResource
 {
     // synthetic task id used by the output buffer of the top task
-    private static final TaskId OUTPUT_TASK_ID = new TaskId("output", "buffer", "id");
+    private static final TaskId OUTPUT_TASK_ID = new TaskId("output", "buffer", 0);
 
     private final QueryManager manager;
 
@@ -144,15 +145,20 @@ public class QueryExecutionResource
         return Response.ok(result).build();
     }
 
-    private static List<StageInfo> collectStages(StageInfo stage)
+    private static List<StageInfo> collectStages(Optional<StageInfo> stage)
     {
         ImmutableList.Builder<StageInfo> result = ImmutableList.builder();
-        result.add(stage);
-        for (StageInfo child : stage.getSubStages()) {
-            result.addAll(collectStages(child));
-        }
-
+        collectStages(stage, result);
         return result.build();
+    }
+
+    private static void collectStages(Optional<StageInfo> stageInfo, ImmutableList.Builder<StageInfo> result)
+    {
+        stageInfo.ifPresent(stage -> {
+            result.add(stage);
+            stage.getSubStages().stream()
+                    .forEach(subStage -> collectStages(Optional.ofNullable(subStage), result));
+        });
     }
 
     public static class Flow

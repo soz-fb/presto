@@ -28,6 +28,7 @@ import com.facebook.presto.spi.SchemaNotFoundException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SchemaTablePrefix;
 import com.facebook.presto.spi.connector.Connector;
+import com.facebook.presto.spi.connector.ConnectorContext;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
 import com.facebook.presto.spi.connector.ConnectorRecordSetProvider;
 import com.facebook.presto.spi.connector.ConnectorSplitManager;
@@ -57,7 +58,7 @@ import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
-import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
+import static com.facebook.presto.spi.type.Varchars.isVarcharType;
 import static com.facebook.presto.testing.TestingConnectorSession.SESSION;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.Iterables.getOnlyElement;
@@ -97,7 +98,8 @@ public class TestCassandraConnector
 
         Connector connector = connectorFactory.create(connectorId, ImmutableMap.of(
                 "cassandra.contact-points", HOSTNAME,
-                "cassandra.native-protocol-port", Integer.toString(PORT)));
+                "cassandra.native-protocol-port", Integer.toString(PORT)),
+                new ConnectorContext() {});
 
         metadata = connector.getMetadata(CassandraTransactionHandle.INSTANCE);
         assertInstanceOf(metadata, CassandraMetadata.class);
@@ -235,7 +237,7 @@ public class TestCassandraConnector
                 else if (DOUBLE.equals(type)) {
                     cursor.getDouble(columnIndex);
                 }
-                else if (VARCHAR.equals(type) || VARBINARY.equals(type)) {
+                else if (isVarcharType(type) || VARBINARY.equals(type)) {
                     try {
                         cursor.getSlice(columnIndex);
                     }

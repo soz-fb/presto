@@ -21,10 +21,14 @@ import org.joda.time.DateTime;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
+import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.ByteOrder;
+import java.util.List;
+import java.util.Locale;
 import java.util.OptionalLong;
 
+import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static java.lang.management.ManagementFactory.OPERATING_SYSTEM_MXBEAN_NAME;
 
 final class PrestoSystemRequirements
@@ -36,15 +40,12 @@ final class PrestoSystemRequirements
 
     public static void verifyJvmRequirements()
     {
-        String specVersion = StandardSystemProperty.JAVA_SPECIFICATION_VERSION.value();
-        if ((specVersion == null) || (specVersion.compareTo("1.8") < 0)) {
-            failRequirement("Presto requires Java 1.8+ (found %s)", specVersion);
-        }
-
         String vendor = StandardSystemProperty.JAVA_VENDOR.value();
         if (!"Oracle Corporation".equals(vendor)) {
             failRequirement("Presto requires an Oracle or OpenJDK JVM (found %s)", vendor);
         }
+
+        verifyJavaVersion();
 
         String dataModel = System.getProperty("sun.arch.data.model");
         if (!"64".equals(dataModel)) {
@@ -71,9 +72,47 @@ final class PrestoSystemRequirements
             failRequirement("Presto requires a little endian platform (found %s)", ByteOrder.nativeOrder());
         }
 
+        verifyUsingG1Gc();
+
         verifyFileDescriptor();
 
         verifySlice();
+    }
+
+    private static void verifyJavaVersion()
+    {
+        String javaVersion = StandardSystemProperty.JAVA_VERSION.value();
+        if (javaVersion == null) {
+            failRequirement("Java version not defined");
+        }
+
+        JavaVersion version = JavaVersion.parse(javaVersion);
+        if (version.getMajor() == 8 && version.getUpdate().isPresent() && version.getUpdate().getAsInt() >= 60) {
+            return;
+        }
+
+        if (version.getMajor() == 9) {
+            return;
+        }
+
+        failRequirement("Presto requires Java 8u60+ (found %s)", javaVersion);
+    }
+
+    private static void verifyUsingG1Gc()
+    {
+        try {
+            List<String> garbageCollectors = ManagementFactory.getGarbageCollectorMXBeans().stream()
+                    .map(GarbageCollectorMXBean::getName)
+                    .collect(toImmutableList());
+
+            if (garbageCollectors.stream().noneMatch(name -> name.toUpperCase(Locale.US).startsWith("G1 "))) {
+                warnRequirement("Current garbage collectors are %s. Presto recommends the G1 garbage collector.", garbageCollectors);
+            }
+        }
+        catch (RuntimeException e) {
+            // This should never happen since we have verified the OS and JVM above
+            failRequirement("Cannot read garbage collector information: %s", e);
+        }
     }
 
     private static void verifyFileDescriptor()

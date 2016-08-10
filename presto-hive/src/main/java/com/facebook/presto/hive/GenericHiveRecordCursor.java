@@ -22,6 +22,7 @@ import com.facebook.presto.spi.type.TypeManager;
 import com.google.common.base.Throwables;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.type.HiveDecimal;
 import org.apache.hadoop.hive.common.type.HiveVarchar;
 import org.apache.hadoop.hive.serde2.Deserializer;
@@ -49,12 +50,15 @@ import static com.facebook.presto.hive.HiveUtil.booleanPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.datePartitionKey;
 import static com.facebook.presto.hive.HiveUtil.doublePartitionKey;
 import static com.facebook.presto.hive.HiveUtil.getDeserializer;
+import static com.facebook.presto.hive.HiveUtil.getPrefilledColumnValue;
 import static com.facebook.presto.hive.HiveUtil.getTableObjectInspector;
 import static com.facebook.presto.hive.HiveUtil.integerPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.isStructuralType;
 import static com.facebook.presto.hive.HiveUtil.longDecimalPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.shortDecimalPartitionKey;
+import static com.facebook.presto.hive.HiveUtil.smallintPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.timestampPartitionKey;
+import static com.facebook.presto.hive.HiveUtil.tinyintPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.varcharPartitionKey;
 import static com.facebook.presto.hive.util.SerDeUtils.getBlockObject;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -66,7 +70,9 @@ import static com.facebook.presto.spi.type.Decimals.isShortDecimal;
 import static com.facebook.presto.spi.type.Decimals.rescale;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
+import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
+import static com.facebook.presto.spi.type.TinyintType.TINYINT;
 import static com.facebook.presto.spi.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.spi.type.Varchars.isVarcharType;
 import static com.facebook.presto.spi.type.Varchars.truncateToLength;
@@ -96,7 +102,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private final ObjectInspector[] fieldInspectors;
     private final StructField[] structFields;
 
-    private final boolean[] isPartitionColumn;
+    private final boolean[] isPrefilledColumn;
 
     private final boolean[] loaded;
     private final boolean[] booleans;
@@ -120,7 +126,8 @@ class GenericHiveRecordCursor<K, V extends Writable>
             List<HivePartitionKey> partitionKeys,
             List<HiveColumnHandle> columns,
             DateTimeZone hiveStorageTimeZone,
-            TypeManager typeManager)
+            TypeManager typeManager,
+            Path path)
     {
         requireNonNull(recordReader, "recordReader is null");
         checkArgument(totalBytes >= 0, "totalBytes is negative");
@@ -128,6 +135,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
         requireNonNull(partitionKeys, "partitionKeys is null");
         requireNonNull(columns, "columns is null");
         requireNonNull(hiveStorageTimeZone, "hiveStorageTimeZone is null");
+        requireNonNull(path, "path is null");
 
         this.recordReader = recordReader;
         this.totalBytes = totalBytes;
@@ -147,7 +155,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
         this.structFields = new StructField[size];
         this.fieldInspectors = new ObjectInspector[size];
 
-        this.isPartitionColumn = new boolean[size];
+        this.isPrefilledColumn = new boolean[size];
 
         this.loaded = new boolean[size];
         this.booleans = new boolean[size];
@@ -164,25 +172,24 @@ class GenericHiveRecordCursor<K, V extends Writable>
             names[i] = column.getName();
             types[i] = typeManager.getType(column.getTypeSignature());
             hiveTypes[i] = column.getHiveType();
+            isPrefilledColumn[i] = column.isPartitionKey() || column.isHidden();
 
-            if (!column.isPartitionKey()) {
+            if (!isPrefilledColumn[i]) {
                 StructField field = rowInspector.getStructFieldRef(column.getName());
                 structFields[i] = field;
                 fieldInspectors[i] = field.getFieldObjectInspector();
             }
-
-            isPartitionColumn[i] = column.isPartitionKey();
         }
 
         // parse requested partition columns
         Map<String, HivePartitionKey> partitionKeysByName = uniqueIndex(partitionKeys, HivePartitionKey::getName);
         for (int columnIndex = 0; columnIndex < columns.size(); columnIndex++) {
             HiveColumnHandle column = columns.get(columnIndex);
-            if (column.isPartitionKey()) {
+            if (isPrefilledColumn[columnIndex]) {
                 HivePartitionKey partitionKey = partitionKeysByName.get(column.getName());
-                checkArgument(partitionKey != null, "Unknown partition key %s", column.getName());
 
-                byte[] bytes = partitionKey.getValue().getBytes(UTF_8);
+                String columnValue = getPrefilledColumnValue(column, partitionKey, path);
+                byte[] bytes = columnValue.getBytes(UTF_8);
 
                 String name = names[columnIndex];
                 Type type = types[columnIndex];
@@ -190,34 +197,40 @@ class GenericHiveRecordCursor<K, V extends Writable>
                     nulls[columnIndex] = true;
                 }
                 else if (BOOLEAN.equals(type)) {
-                    booleans[columnIndex] = booleanPartitionKey(partitionKey.getValue(), name);
+                    booleans[columnIndex] = booleanPartitionKey(columnValue, name);
                 }
                 else if (BIGINT.equals(type)) {
-                    longs[columnIndex] = bigintPartitionKey(partitionKey.getValue(), name);
+                    longs[columnIndex] = bigintPartitionKey(columnValue, name);
                 }
                 else if (INTEGER.equals(type)) {
-                    longs[columnIndex] = integerPartitionKey(partitionKey.getValue(), name);
+                    longs[columnIndex] = integerPartitionKey(columnValue, name);
+                }
+                else if (SMALLINT.equals(type)) {
+                    longs[columnIndex] = smallintPartitionKey(columnValue, name);
+                }
+                else if (TINYINT.equals(type)) {
+                    longs[columnIndex] = tinyintPartitionKey(columnValue, name);
                 }
                 else if (DOUBLE.equals(type)) {
-                    doubles[columnIndex] = doublePartitionKey(partitionKey.getValue(), name);
+                    doubles[columnIndex] = doublePartitionKey(columnValue, name);
                 }
                 else if (isVarcharType(type)) {
-                    slices[columnIndex] = varcharPartitionKey(partitionKey.getValue(), name, type);
+                    slices[columnIndex] = varcharPartitionKey(columnValue, name, type);
                 }
                 else if (DATE.equals(type)) {
-                    longs[columnIndex] = datePartitionKey(partitionKey.getValue(), name);
+                    longs[columnIndex] = datePartitionKey(columnValue, name);
                 }
                 else if (TIMESTAMP.equals(type)) {
-                    longs[columnIndex] = timestampPartitionKey(partitionKey.getValue(), hiveStorageTimeZone, name);
+                    longs[columnIndex] = timestampPartitionKey(columnValue, hiveStorageTimeZone, name);
                 }
                 else if (isShortDecimal(type)) {
-                    longs[columnIndex] = shortDecimalPartitionKey(partitionKey.getValue(), (DecimalType) type, name);
+                    longs[columnIndex] = shortDecimalPartitionKey(columnValue, (DecimalType) type, name);
                 }
                 else if (isLongDecimal(type)) {
-                    slices[columnIndex] = longDecimalPartitionKey(partitionKey.getValue(), (DecimalType) type, name);
+                    slices[columnIndex] = longDecimalPartitionKey(columnValue, (DecimalType) type, name);
                 }
                 else {
-                    throw new PrestoException(NOT_SUPPORTED, format("Unsupported column type %s for partition key: %s", type.getDisplayName(), name));
+                    throw new PrestoException(NOT_SUPPORTED, format("Unsupported column type %s for prefilled column: %s", type.getDisplayName(), name));
                 }
             }
         }
@@ -264,8 +277,8 @@ class GenericHiveRecordCursor<K, V extends Writable>
             }
 
             // reset loaded flags
-            // partition keys are already loaded, but everything else is not
-            System.arraycopy(isPartitionColumn, 0, loaded, 0, isPartitionColumn.length);
+            // prefilled values are already loaded, but everything else is not
+            System.arraycopy(isPrefilledColumn, 0, loaded, 0, isPrefilledColumn.length);
 
             // decode value
             rowData = deserializer.deserialize(value);
@@ -293,7 +306,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private void parseBooleanColumn(int column)
     {
         // don't include column number in message because it causes boxing which is expensive here
-        checkArgument(!isPartitionColumn[column], "Column is a partition key");
+        checkArgument(!isPrefilledColumn[column], "Column is prefilled");
 
         loaded[column] = true;
 
@@ -325,7 +338,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private void parseLongColumn(int column)
     {
         // don't include column number in message because it causes boxing which is expensive here
-        checkArgument(!isPartitionColumn[column], "Column is a partition key");
+        checkArgument(!isPrefilledColumn[column], "Column is prefilled");
 
         loaded[column] = true;
 
@@ -385,7 +398,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private void parseDoubleColumn(int column)
     {
         // don't include column number in message because it causes boxing which is expensive here
-        checkArgument(!isPartitionColumn[column], "Column is a partition key");
+        checkArgument(!isPrefilledColumn[column], "Column is prefilled");
 
         loaded[column] = true;
 
@@ -417,7 +430,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private void parseStringColumn(int column)
     {
         // don't include column number in message because it causes boxing which is expensive here
-        checkArgument(!isPartitionColumn[column], "Column is a partition key");
+        checkArgument(!isPrefilledColumn[column], "Column is prefilled");
 
         loaded[column] = true;
 
@@ -454,7 +467,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private void parseDecimalColumn(int column)
     {
         // don't include column number in message because it causes boxing which is expensive here
-        checkArgument(!isPartitionColumn[column], "Column is a partition key");
+        checkArgument(!isPrefilledColumn[column], "Column is prefilled");
 
         loaded[column] = true;
 
@@ -496,7 +509,7 @@ class GenericHiveRecordCursor<K, V extends Writable>
     private void parseObjectColumn(int column)
     {
         // don't include column number in message because it causes boxing which is expensive here
-        checkArgument(!isPartitionColumn[column], "Column is a partition key");
+        checkArgument(!isPrefilledColumn[column], "Column is prefilled");
 
         loaded[column] = true;
 
@@ -532,6 +545,12 @@ class GenericHiveRecordCursor<K, V extends Writable>
             parseLongColumn(column);
         }
         else if (INTEGER.equals(type)) {
+            parseLongColumn(column);
+        }
+        else if (SMALLINT.equals(type)) {
+            parseLongColumn(column);
+        }
+        else if (TINYINT.equals(type)) {
             parseLongColumn(column);
         }
         else if (DOUBLE.equals(type)) {

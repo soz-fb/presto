@@ -21,6 +21,7 @@ databases:
     schema: default
     prepare_statement: USE ${databases.hive.schema}
     table_manager_type: hive
+    warehouse_directory_path: /user/hive/warehouse
 
   presto:
     host: localhost
@@ -28,6 +29,24 @@ databases:
     jdbc_driver_class: com.facebook.presto.jdbc.PrestoDriver
     jdbc_url: jdbc:presto://${databases.presto.server_address}/hive/${databases.hive.schema}
     jdbc_user: hdfs
+    jdbc_password: na
+    jdbc_pooling: false
+
+  alice@presto:
+    host: localhost
+    server_address: ${databases.presto.host}:8080
+    jdbc_driver_class: ${databases.presto.jdbc_driver_class}
+    jdbc_url: jdbc:presto://${databases.presto.server_address}/hive/${databases.hive.schema}
+    jdbc_user: alice
+    jdbc_password: na
+    jdbc_pooling: false
+
+  bob@presto:
+    host: localhost
+    server_address: ${databases.presto.host}:8080
+    jdbc_driver_class: ${databases.presto.jdbc_driver_class}
+    jdbc_url: jdbc:presto://${databases.presto.server_address}/hive/${databases.hive.schema}
+    jdbc_user: bob
     jdbc_password: na
     jdbc_pooling: false
 

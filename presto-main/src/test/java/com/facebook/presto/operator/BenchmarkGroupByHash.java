@@ -13,12 +13,12 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.array.LongBigArray;
 import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.type.BigintOperators;
-import com.facebook.presto.util.array.LongBigArray;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import io.airlift.slice.XxHash64;
@@ -138,7 +138,7 @@ public class BenchmarkGroupByHash
 
         long groupIds = 0;
         for (Page page : data.getPages()) {
-            Block block = page.getBlocks()[0];
+            Block block = page.getBlock(0);
             int positionCount = block.getPositionCount();
             for (int position = 0; position < positionCount; position++) {
                 long value = block.getLong(position, 0);
@@ -167,7 +167,7 @@ public class BenchmarkGroupByHash
 
         long groupIds = 0;
         for (Page page : data.getPages()) {
-            Block block = page.getBlocks()[0];
+            Block block = page.getBlock(0);
             int positionCount = block.getPositionCount();
             for (int position = 0; position < positionCount; position++) {
                 long value = BIGINT.getLong(block, position);

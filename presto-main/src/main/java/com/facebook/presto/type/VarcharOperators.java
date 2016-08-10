@@ -13,22 +13,24 @@
  */
 package com.facebook.presto.type;
 
-import com.facebook.presto.operator.scalar.ScalarOperator;
 import com.facebook.presto.spi.PrestoException;
+import com.facebook.presto.spi.function.LiteralParameters;
+import com.facebook.presto.spi.function.ScalarOperator;
+import com.facebook.presto.spi.function.SqlType;
 import com.facebook.presto.spi.type.StandardTypes;
 import io.airlift.slice.Slice;
 import io.airlift.slice.XxHash64;
 
-import static com.facebook.presto.metadata.OperatorType.BETWEEN;
-import static com.facebook.presto.metadata.OperatorType.CAST;
-import static com.facebook.presto.metadata.OperatorType.EQUAL;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.HASH_CODE;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.NOT_EQUAL;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_CAST_ARGUMENT;
+import static com.facebook.presto.spi.function.OperatorType.BETWEEN;
+import static com.facebook.presto.spi.function.OperatorType.CAST;
+import static com.facebook.presto.spi.function.OperatorType.EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.HASH_CODE;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.NOT_EQUAL;
 import static java.lang.String.format;
 
 public final class VarcharOperators
@@ -150,6 +152,19 @@ public final class VarcharOperators
 
     @LiteralParameters("x")
     @ScalarOperator(CAST)
+    @SqlType(StandardTypes.FLOAT)
+    public static long castToFloat(@SqlType("varchar(x)") Slice slice)
+    {
+        try {
+            return Float.floatToIntBits(Float.parseFloat(slice.toStringUtf8()));
+        }
+        catch (Exception e) {
+            throw new PrestoException(INVALID_CAST_ARGUMENT, format("Can not cast '%s' to FLOAT", slice.toStringUtf8()));
+        }
+    }
+
+    @LiteralParameters("x")
+    @ScalarOperator(CAST)
     @SqlType(StandardTypes.BIGINT)
     public static long castToBigint(@SqlType("varchar(x)") Slice slice)
     {
@@ -171,6 +186,32 @@ public final class VarcharOperators
         }
         catch (Exception e) {
             throw new PrestoException(INVALID_CAST_ARGUMENT, format("Can not cast '%s' to INT", slice.toStringUtf8()));
+        }
+    }
+
+    @LiteralParameters("x")
+    @ScalarOperator(CAST)
+    @SqlType(StandardTypes.SMALLINT)
+    public static long castToSmallint(@SqlType("varchar(x)") Slice slice)
+    {
+        try {
+            return Short.parseShort(slice.toStringUtf8());
+        }
+        catch (Exception e) {
+            throw new PrestoException(INVALID_CAST_ARGUMENT, format("Can not cast '%s' to SMALLINT", slice.toStringUtf8()));
+        }
+    }
+
+    @LiteralParameters("x")
+    @ScalarOperator(CAST)
+    @SqlType(StandardTypes.TINYINT)
+    public static long castToTinyint(@SqlType("varchar(x)") Slice slice)
+    {
+        try {
+            return Byte.parseByte(slice.toStringUtf8());
+        }
+        catch (Exception e) {
+            throw new PrestoException(INVALID_CAST_ARGUMENT, format("Can not cast '%s' to TINYINT", slice.toStringUtf8()));
         }
     }
 

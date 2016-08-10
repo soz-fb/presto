@@ -15,8 +15,8 @@ package com.facebook.presto.operator.scalar;
 
 import com.facebook.presto.metadata.BoundVariables;
 import com.facebook.presto.metadata.FunctionRegistry;
-import com.facebook.presto.metadata.OperatorType;
 import com.facebook.presto.metadata.SqlOperator;
+import com.facebook.presto.spi.function.OperatorType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
 import com.google.common.collect.ImmutableList;
@@ -25,6 +25,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 
 import static com.facebook.presto.metadata.Signature.typeVariable;
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static com.google.common.base.Preconditions.checkArgument;
 
 public class IdentityCast
@@ -34,7 +35,11 @@ public class IdentityCast
 
     protected IdentityCast()
     {
-        super(OperatorType.CAST, ImmutableList.of(typeVariable("T")), ImmutableList.of(), "T", ImmutableList.of("T"));
+        super(OperatorType.CAST,
+                ImmutableList.of(typeVariable("T")),
+                ImmutableList.of(),
+                parseTypeSignature("T"),
+                ImmutableList.of(parseTypeSignature("T")));
     }
 
     @Override

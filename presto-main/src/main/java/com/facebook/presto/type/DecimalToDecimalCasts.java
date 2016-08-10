@@ -27,14 +27,15 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 import static com.facebook.presto.metadata.FunctionKind.SCALAR;
-import static com.facebook.presto.metadata.OperatorType.CAST;
 import static com.facebook.presto.metadata.Signature.withVariadicBound;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_CAST_ARGUMENT;
+import static com.facebook.presto.spi.function.OperatorType.CAST;
 import static com.facebook.presto.spi.type.Decimals.decodeUnscaledValue;
 import static com.facebook.presto.spi.type.Decimals.encodeUnscaledValue;
 import static com.facebook.presto.spi.type.Decimals.longTenToNth;
 import static com.facebook.presto.spi.type.Decimals.overflows;
 import static com.facebook.presto.spi.type.StandardTypes.DECIMAL;
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static java.lang.String.format;
 
 public final class DecimalToDecimalCasts
@@ -43,8 +44,8 @@ public final class DecimalToDecimalCasts
             .kind(SCALAR)
             .operatorType(CAST)
             .typeVariableConstraints(withVariadicBound("F", DECIMAL), withVariadicBound("T", DECIMAL))
-            .argumentTypes("F")
-            .returnType("T")
+            .argumentTypes(parseTypeSignature("F"))
+            .returnType(parseTypeSignature("T"))
             .build();
 
     // TODO: filtering mechanism could be used to return NoOp method when only precision is increased

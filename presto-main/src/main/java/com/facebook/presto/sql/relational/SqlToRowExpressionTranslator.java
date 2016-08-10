@@ -32,9 +32,11 @@ import com.facebook.presto.sql.tree.BetweenPredicate;
 import com.facebook.presto.sql.tree.BinaryLiteral;
 import com.facebook.presto.sql.tree.BooleanLiteral;
 import com.facebook.presto.sql.tree.Cast;
+import com.facebook.presto.sql.tree.CharLiteral;
 import com.facebook.presto.sql.tree.CoalesceExpression;
 import com.facebook.presto.sql.tree.ComparisonExpression;
 import com.facebook.presto.sql.tree.DecimalLiteral;
+import com.facebook.presto.sql.tree.DereferenceExpression;
 import com.facebook.presto.sql.tree.DoubleLiteral;
 import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.FieldReference;
@@ -52,6 +54,7 @@ import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.NotExpression;
 import com.facebook.presto.sql.tree.NullIfExpression;
 import com.facebook.presto.sql.tree.NullLiteral;
+import com.facebook.presto.sql.tree.Row;
 import com.facebook.presto.sql.tree.SearchedCaseExpression;
 import com.facebook.presto.sql.tree.SimpleCaseExpression;
 import com.facebook.presto.sql.tree.StringLiteral;
@@ -60,6 +63,8 @@ import com.facebook.presto.sql.tree.TimeLiteral;
 import com.facebook.presto.sql.tree.TimestampLiteral;
 import com.facebook.presto.sql.tree.TryExpression;
 import com.facebook.presto.sql.tree.WhenClause;
+import com.facebook.presto.type.RowType;
+import com.facebook.presto.type.RowType.RowField;
 import com.facebook.presto.type.UnknownType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -70,6 +75,7 @@ import java.util.List;
 import static com.facebook.presto.metadata.FunctionKind.SCALAR;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
+import static com.facebook.presto.spi.type.CharType.createCharType;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
 import static com.facebook.presto.spi.type.TimeWithTimeZoneType.TIME_WITH_TIME_ZONE;
@@ -89,10 +95,12 @@ import static com.facebook.presto.sql.relational.Signatures.betweenSignature;
 import static com.facebook.presto.sql.relational.Signatures.castSignature;
 import static com.facebook.presto.sql.relational.Signatures.coalesceSignature;
 import static com.facebook.presto.sql.relational.Signatures.comparisonExpressionSignature;
+import static com.facebook.presto.sql.relational.Signatures.dereferenceSignature;
 import static com.facebook.presto.sql.relational.Signatures.likePatternSignature;
 import static com.facebook.presto.sql.relational.Signatures.likeSignature;
 import static com.facebook.presto.sql.relational.Signatures.logicalExpressionSignature;
 import static com.facebook.presto.sql.relational.Signatures.nullIfSignature;
+import static com.facebook.presto.sql.relational.Signatures.rowConstructorSignature;
 import static com.facebook.presto.sql.relational.Signatures.subscriptSignature;
 import static com.facebook.presto.sql.relational.Signatures.switchSignature;
 import static com.facebook.presto.sql.relational.Signatures.tryCastSignature;
@@ -106,6 +114,9 @@ import static com.facebook.presto.util.DateTimeUtils.parseTimestampWithTimeZone;
 import static com.facebook.presto.util.DateTimeUtils.parseTimestampWithoutTimeZone;
 import static com.facebook.presto.util.DateTimeUtils.parseYearMonthInterval;
 import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
+import static com.facebook.presto.util.Types.checkType;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 import static io.airlift.slice.SliceUtf8.countCodePoints;
 import static io.airlift.slice.Slices.utf8Slice;
 import static java.util.Objects.requireNonNull;
@@ -201,6 +212,12 @@ public final class SqlToRowExpressionTranslator
         protected RowExpression visitStringLiteral(StringLiteral node, Void context)
         {
             return constant(node.getSlice(), createVarcharType(countCodePoints(node.getSlice())));
+        }
+
+        @Override
+        protected RowExpression visitCharLiteral(CharLiteral node, Void context)
+        {
+            return constant(node.getSlice(), createCharType(countCodePoints(node.getSlice())));
         }
 
         @Override
@@ -397,8 +414,8 @@ public final class SqlToRowExpressionTranslator
         protected RowExpression visitCoalesceExpression(CoalesceExpression node, Void context)
         {
             List<RowExpression> arguments = node.getOperands().stream()
-                            .map(value -> process(value, context))
-                            .collect(toImmutableList());
+                    .map(value -> process(value, context))
+                    .collect(toImmutableList());
 
             List<Type> argumentTypes = arguments.stream().map(RowExpression::getType).collect(toImmutableList());
             return call(coalesceSignature(types.get(node), argumentTypes), types.get(node), arguments);
@@ -464,6 +481,24 @@ public final class SqlToRowExpressionTranslator
             }
 
             return expression;
+        }
+
+        @Override
+        protected RowExpression visitDereferenceExpression(DereferenceExpression node, Void context)
+        {
+            RowType rowType = checkType(types.get(node.getBase()), RowType.class, "type");
+            List<RowField> fields = rowType.getFields();
+            int index = -1;
+            for (int i = 0; i < fields.size(); i++) {
+                RowField field = fields.get(i);
+                if (field.getName().isPresent() && field.getName().get().equalsIgnoreCase(node.getFieldName())) {
+                    checkArgument(index < 0, "Ambiguous field %s in type %s", field, rowType.getDisplayName());
+                    index = i;
+                }
+            }
+            checkState(index >= 0, "could not find field name: %s", node.getFieldName());
+            Type returnType = types.get(node);
+            return call(dereferenceSignature(returnType, rowType), returnType, process(node.getBase(), context), constant(index, INTEGER));
         }
 
         @Override
@@ -593,6 +628,19 @@ public final class SqlToRowExpressionTranslator
                     .map(RowExpression::getType)
                     .collect(toImmutableList());
             return call(arrayConstructorSignature(types.get(node), argumentTypes), types.get(node), arguments);
+        }
+
+        @Override
+        protected RowExpression visitRow(Row node, Void context)
+        {
+            List<RowExpression> arguments = node.getItems().stream()
+                    .map(value -> process(value, context))
+                    .collect(toImmutableList());
+            Type returnType = types.get(node);
+            List<Type> argumentTypes = node.getItems().stream()
+                    .map(value -> types.get(value))
+                    .collect(toImmutableList());
+            return call(rowConstructorSignature(returnType, argumentTypes), returnType, arguments);
         }
     }
 }

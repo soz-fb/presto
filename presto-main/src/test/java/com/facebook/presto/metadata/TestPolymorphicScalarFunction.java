@@ -15,20 +15,23 @@ package com.facebook.presto.metadata;
 
 import com.facebook.presto.block.BlockEncodingManager;
 import com.facebook.presto.operator.scalar.ScalarFunctionImplementation;
+import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.TypeSignature;
+import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.type.TypeRegistry;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import org.testng.annotations.Test;
 
 import static com.facebook.presto.metadata.FunctionKind.SCALAR;
-import static com.facebook.presto.metadata.OperatorType.ADD;
 import static com.facebook.presto.metadata.Signature.comparableWithVariadicBound;
 import static com.facebook.presto.metadata.TestPolymorphicScalarFunction.TestMethods.VARCHAR_TO_BIGINT_RETURN_VALUE;
 import static com.facebook.presto.metadata.TestPolymorphicScalarFunction.TestMethods.VARCHAR_TO_VARCHAR_RETURN_VALUE;
+import static com.facebook.presto.spi.function.OperatorType.ADD;
 import static com.facebook.presto.spi.type.StandardTypes.VARCHAR;
 import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 import static org.testng.Assert.assertEquals;
@@ -36,13 +39,12 @@ import static org.testng.Assert.assertEquals;
 public class TestPolymorphicScalarFunction
 {
     private static final TypeRegistry TYPE_REGISTRY = new TypeRegistry();
-    private static final FunctionRegistry REGISTRY = new FunctionRegistry(TYPE_REGISTRY, new BlockEncodingManager(TYPE_REGISTRY), true);
+    private static final FunctionRegistry REGISTRY = new FunctionRegistry(TYPE_REGISTRY, new BlockEncodingManager(TYPE_REGISTRY), new FeaturesConfig().setExperimentalSyntaxEnabled(true));
     private static final Signature SIGNATURE = Signature.builder()
             .name("foo")
             .kind(SCALAR)
-            .returnType("bigint")
-            .argumentTypes("varchar(x)")
-            .literalParameters("x")
+            .returnType(parseTypeSignature(StandardTypes.BIGINT))
+            .argumentTypes(parseTypeSignature("varchar(x)", ImmutableSet.of("x")))
             .build();
     private static final long INPUT_VARCHAR_LENGTH = 10;
     private static final String INPUT_VARCHAR_SIGNATURE = "varchar(" + INPUT_VARCHAR_LENGTH + ")";
@@ -131,9 +133,8 @@ public class TestPolymorphicScalarFunction
         Signature signature = Signature.builder()
                 .name("foo")
                 .kind(SCALAR)
-                .returnType("varchar(x)")
-                .argumentTypes("varchar(x)")
-                .literalParameters("x")
+                .returnType(parseTypeSignature("varchar(x)", ImmutableSet.of("x")))
+                .argumentTypes(parseTypeSignature("varchar(x)", ImmutableSet.of("x")))
                 .build();
 
         SqlScalarFunction function = SqlScalarFunction.builder(TestMethods.class)
@@ -154,8 +155,8 @@ public class TestPolymorphicScalarFunction
                 .name("foo")
                 .kind(SCALAR)
                 .typeVariableConstraints(comparableWithVariadicBound("V", VARCHAR))
-                .returnType("V")
-                .argumentTypes("V")
+                .returnType(parseTypeSignature("V"))
+                .argumentTypes(parseTypeSignature("V"))
                 .build();
 
         SqlScalarFunction function = SqlScalarFunction.builder(TestMethods.class)
@@ -174,9 +175,8 @@ public class TestPolymorphicScalarFunction
         Signature signature = Signature.builder()
                 .operatorType(ADD)
                 .kind(SCALAR)
-                .returnType("varchar(x)")
-                .argumentTypes("varchar(x)")
-                .literalParameters("x")
+                .returnType(parseTypeSignature("varchar(x)", ImmutableSet.of("x")))
+                .argumentTypes(parseTypeSignature("varchar(x)", ImmutableSet.of("x")))
                 .build();
 
         SqlScalarFunction function = SqlScalarFunction.builder(TestMethods.class)

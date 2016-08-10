@@ -14,6 +14,7 @@
 package com.facebook.presto.execution;
 
 import com.facebook.presto.OutputBuffers;
+import com.facebook.presto.OutputBuffers.OutputBufferId;
 import com.facebook.presto.Session;
 import com.facebook.presto.SystemSessionProperties;
 import com.facebook.presto.execution.StateMachine.StateChangeListener;
@@ -34,6 +35,7 @@ import com.facebook.presto.sql.planner.DistributedExecutionPlanner;
 import com.facebook.presto.sql.planner.InputExtractor;
 import com.facebook.presto.sql.planner.LogicalPlanner;
 import com.facebook.presto.sql.planner.NodePartitioningManager;
+import com.facebook.presto.sql.planner.PartitioningHandle;
 import com.facebook.presto.sql.planner.Plan;
 import com.facebook.presto.sql.planner.PlanFragmenter;
 import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
@@ -59,7 +61,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.facebook.presto.OutputBuffers.BROADCAST_PARTITION_ID;
-import static com.facebook.presto.OutputBuffers.INITIAL_EMPTY_OUTPUT_BUFFERS;
+import static com.facebook.presto.OutputBuffers.createInitialEmptyOutputBuffers;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
@@ -69,9 +71,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 public final class SqlQueryExecution
         implements QueryExecution
 {
-    private static final OutputBuffers ROOT_OUTPUT_BUFFERS = INITIAL_EMPTY_OUTPUT_BUFFERS
-            .withBuffer(new TaskId("output", "buffer", "id"), BROADCAST_PARTITION_ID)
-            .withNoMoreBufferIds();
+    private static final OutputBufferId OUTPUT_BUFFER_ID = new OutputBufferId(0);
 
     private final QueryStateMachine stateMachine;
 
@@ -153,10 +153,6 @@ public final class SqlQueryExecution
                 if (scheduler != null) {
                     scheduler.abort();
                 }
-
-                // capture the final query state and drop reference to the scheduler
-                finalQueryInfo.compareAndSet(null, buildQueryInfo(scheduler));
-                queryScheduler.set(null);
             });
 
             this.remoteTaskFactory = new MemoryTrackingRemoteTaskFactory(requireNonNull(remoteTaskFactory, "remoteTaskFactory is null"), stateMachine);
@@ -280,7 +276,7 @@ public final class SqlQueryExecution
 
         // plan query
         PlanNodeIdAllocator idAllocator = new PlanNodeIdAllocator();
-        LogicalPlanner logicalPlanner = new LogicalPlanner(stateMachine.getSession(), planOptimizers, idAllocator, metadata);
+        LogicalPlanner logicalPlanner = new LogicalPlanner(stateMachine.getSession(), planOptimizers, idAllocator, metadata, sqlParser);
         Plan plan = logicalPlanner.plan(analysis);
 
         // extract inputs
@@ -314,6 +310,11 @@ public final class SqlQueryExecution
         // record field names
         stateMachine.setOutputFieldNames(outputStageExecutionPlan.getFieldNames());
 
+        PartitioningHandle partitioningHandle = plan.getRoot().getFragment().getPartitioningScheme().getPartitioning().getHandle();
+        OutputBuffers rootOutputBuffers = createInitialEmptyOutputBuffers(partitioningHandle)
+                .withBuffer(OUTPUT_BUFFER_ID, BROADCAST_PARTITION_ID)
+                .withNoMoreBufferIds();
+
         // build the stage execution objects (this doesn't schedule execution)
         SqlQueryScheduler scheduler = new SqlQueryScheduler(
                 stateMachine,
@@ -326,7 +327,7 @@ public final class SqlQueryExecution
                 plan.isSummarizeTaskInfos(),
                 scheduleSplitBatchSize,
                 queryExecutor,
-                ROOT_OUTPUT_BUFFERS,
+                rootOutputBuffers,
                 nodeTaskMap,
                 executionPolicy);
 
@@ -338,6 +339,12 @@ public final class SqlQueryExecution
             scheduler.abort();
             queryScheduler.set(null);
         }
+    }
+
+    @Override
+    public void cancelQuery()
+    {
+        stateMachine.transitionToCanceled();
     }
 
     @Override
@@ -380,20 +387,21 @@ public final class SqlQueryExecution
     public void pruneInfo()
     {
         QueryInfo queryInfo = finalQueryInfo.get();
-        if (queryInfo == null || queryInfo.getOutputStage() == null) {
+        if (queryInfo == null || !queryInfo.getOutputStage().isPresent()) {
             return;
         }
 
+        StageInfo outputStage = queryInfo.getOutputStage().get();
         StageInfo prunedOutputStage = new StageInfo(
-                queryInfo.getOutputStage().getStageId(),
-                queryInfo.getOutputStage().getState(),
-                queryInfo.getOutputStage().getSelf(),
+                outputStage.getStageId(),
+                outputStage.getState(),
+                outputStage.getSelf(),
                 null, // Remove the plan
-                queryInfo.getOutputStage().getTypes(),
-                queryInfo.getOutputStage().getStageStats(),
+                outputStage.getTypes(),
+                outputStage.getStageStats(),
                 ImmutableList.of(), // Remove the tasks
                 ImmutableList.of(), // Remove the substages
-                queryInfo.getOutputStage().getFailureCause()
+                outputStage.getFailureCause()
         );
 
         QueryInfo prunedQueryInfo = new QueryInfo(
@@ -408,10 +416,12 @@ public final class SqlQueryExecution
                 queryInfo.getQueryStats(),
                 queryInfo.getSetSessionProperties(),
                 queryInfo.getResetSessionProperties(),
+                queryInfo.getAddedPreparedStatements(),
+                queryInfo.getDeallocatedPreparedStatements(),
                 queryInfo.getStartedTransactionId(),
                 queryInfo.isClearTransactionId(),
                 queryInfo.getUpdateType(),
-                prunedOutputStage,
+                Optional.of(prunedOutputStage),
                 queryInfo.getFailureInfo(),
                 queryInfo.getErrorCode(),
                 queryInfo.getInputs()
@@ -451,11 +461,20 @@ public final class SqlQueryExecution
 
     private QueryInfo buildQueryInfo(SqlQueryScheduler scheduler)
     {
-        StageInfo stageInfo = null;
+        Optional<StageInfo> stageInfo = Optional.empty();
         if (scheduler != null) {
-            stageInfo = scheduler.getStageInfo();
+            stageInfo = Optional.ofNullable(scheduler.getStageInfo());
         }
-        return stateMachine.getQueryInfo(stageInfo);
+
+        QueryInfo queryInfo = stateMachine.getQueryInfo(stageInfo);
+
+        if (queryInfo.isFinalQueryInfo()) {
+            // capture the final query state and drop reference to the scheduler
+            finalQueryInfo.compareAndSet(null, queryInfo);
+            queryScheduler.set(null);
+        }
+
+        return queryInfo;
     }
 
     private static class PlanRoot

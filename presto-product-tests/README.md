@@ -96,27 +96,64 @@ VM will have to be re-downloaded when the product tests are kicked
 off. To avoid this unnecessary re-download, do not create new
 VMs often.
 
+## Use the `docker-compose` wrappers
+
+We're using [multiple compose files](https://docs.docker.com/compose/extends/#multiple-compose-files)
+because of the number of overrides needed for different environments,
+and deficiencies of `extends:` syntax (see the note
+[here](https://docs.docker.com/compose/extends/#extending-services)).
+
+
+To ease the pain of passing multiple `-f` arguments to `docker-compose`,
+each environment has a `compose.sh` wrapper script. Thanks to it, instead of e.g.
+
+`docker-compose -f ./docker-compose.yml -f ../common/standard.yml -f ../common/jdbc_db.yml [compose commands]`
+
+one can simply write
+
+`compose.sh [compose commands]`
+
 ## Running the product tests
 
 The Presto product tests must be run explicitly because they do not run
 as part of the Maven build like the unit tests do. Note that the product
 tests cannot be run in parallel. This means that only one instance of a
 test can be run at once in a given environment. To run all product
-tests and exclude the `quarantine` and `big_query` groups run the
-following command:
+tests and exclude the `quarantine`, `big_query` and `profile_specific_tests`
+groups run the following command:
 
 ```
 ./mvnw install -DskipTests
-presto-product-tests/bin/run_on_docker.sh <profile> -x quarantine,big_query
+presto-product-tests/bin/run_on_docker.sh <profile> -x quarantine,big_query,profile_specific_tests
 ```
 
-where `<profile>` is one of either:
+where [profile](#profile) is one of either:
 - **multinode** - pseudo-distributed Hadoop installation running on a
  single Docker container and a distributed Presto installation running on
- multiple Docker containers.
+ multiple Docker containers. For multinode the default configuration is
+ 1 coordinator and 1 worker.
 - **singlenode** - pseudo-distributed Hadoop installation running on a
  single Docker container and a single node installation of Presto also running
  on a single Docker container.
+- **singlenode-hdfs-impersonation** - pseudo-distributed Hadoop installation
+ running on a single Docker container and a single node installation of Presto
+ also running on a single Docker container. Presto impersonates the user who
+ is running the query when accessing HDFS.
+- **singlenode-kerberos-hdfs-impersonation** - pseudo-distributed kerberized
+ Hadoop installation running on a single Docker container and a single node
+ installation of kerberized Presto also running on a single Docker container.
+ This profile has Kerberos impersonation. Presto impersonates the user who
+ is running the query when accessing HDFS.
+- **singlenode-kerberos-hdfs-no-impersonation** - pseudo-distributed Hadoop
+ installation running on a single Docker container and a single node
+ installation of kerberized Presto also running on a single Docker container.
+ This profile runs Kerberos without impersonation.
+
+Please keep in mind that if you run tests on Hive of version not greater than 1.0.1, you should exclude test from `post_hive_1_0_1` group by passing the following flag to tempto: `-x post_hive_1_0_1`.
+First version of Hive capable of running tests from `post_hive_1_0_1` group is Hive 1.1.0.
+
+For more information on the various ways in which Presto can be configured to
+interact with Kerberized Hive and Hadoop, please refer to the [Hive connector documentation](https://prestodb.io/docs/current/connector/hive.html).
 
 The `run_on_docker.sh` script can also run individual product tests. Presto
 product tests are either [Java based](https://github.com/prestodb/tempto#java-based-tests)
@@ -128,6 +165,42 @@ and each type can be run individually with the following commands:
 presto-product-tests/bin/run_on_docker.sh <profile> -t com.facebook.presto.tests.functions.operators.Comparison.testLessThanOrEqualOperatorExists
 # Run single convention based test
 presto-product-tests/bin/run_on_docker.sh <profile> -t sql_tests.testcases.system.selectInformationSchemaTables
+```
+
+Tests belong to a single or possibly multiple groups. Java based tests are
+tagged with groups in the `@Test` annotation and convention based tests have
+group information in the first line of their test file. Instead of running
+single tests, or all tests, users can also run one or more test groups.
+This enables users to test features in a cross functional way. To run a
+particular group, use the `-g` argument as shown:
+
+```
+# Run all tests in the string_functions and create_table groups
+presto-product-tests/bin/run_on_docker.sh <profile> -g string_functions,create_tables
+```
+
+Some groups of tests can only be run with certain profiles. For example,
+impersonation tests can only be run with profiles where
+impersonation is enabled (`singlenode-hdfs-impersonation` and
+`singlenode-kerberos-hdfs-impersonation`) and no impersonation tests can
+only be run with profiles where impersonation is disabled (`singlenode`
+and `singlenode-kerberos-hdfs-no-impersonation`). Tests that require
+a specific profile to run are called profile specific tests. In addition
+to their respective group, all such tests also belong to a parent group
+called `profile_specific_tests`. To exclude such tests from a run
+make sure to add the `profile_specific_tests` group to the list of
+excluded groups. The examples below illustrate the above concepts:
+
+```
+# Run the HDFS impersonation tests, where <profile> is one of either
+# singlenode-hdfs-impersonation or singlenode-kerberos-hdfs-impersonation
+presto-product-tests/bin/run_on_docker.sh <profile> -g hdfs_impersonation
+# Run the no HDFS impersonation tests, where <profile> is one of either
+# singlenode or singlenode-kerberos-hdfs-no-impersonation
+presto-product-tests/bin/run_on_docker.sh <profile> -g hdfs_no_impersonation
+# Run all tests excluding all profile specific tests
+presto-product-tests/bin/run_on_docker.sh <profile> -x quarantine,big_query,profile_specific_tests
+where <profile> can be any one of the available profiles
 ```
 
 For running Java based tests from IntelliJ see the section on
@@ -155,13 +228,13 @@ setup outlined below:
 2. Start Hadoop in pseudo-distributed mode in a Docker container:
 
     ```
-    docker-compose -f presto-product-tests/conf/docker/singlenode/docker-compose.yml up -d hadoop-master
+    presto-product-tests/conf/docker/singlenode/compose.sh up -d hadoop-master
     ```
     
     Tip: To display container logs run:
 
     ```
-    docker-compose -f presto-product-tests/conf/docker/singlenode/docker-compose.yml logs
+    presto-product-tests/conf/docker/singlenode/compose.sh logs
     ```
     
 3. Add an IP-to-host mapping for the `hadoop-master` host in `/etc/hosts`.
@@ -171,7 +244,7 @@ The format of `/etc/hosts` entries is `<ip> <host>`:
     The container IP can be obtained by running:
 
         ```
-        docker inspect $(docker-compose -f presto-product-tests/conf/docker/singlenode/docker-compose.yml ps -q hadoop-master) | grep -i IPAddress
+        docker inspect $(presto-product-tests/conf/docker/singlenode/compose.sh ps -q hadoop-master) | grep -i IPAddress
         ```
 
     - On OS X add the following mapping: `<docker machine ip> hadoop-master`.
@@ -199,7 +272,7 @@ or debug the respective test(s).
 following command:
 
     ```
-    docker-compose -f presto-product-tests/conf/docker/singlenode/docker-compose.yml down
+    presto-product-tests/conf/docker/singlenode/compose.sh down
     ```
 
 ### Debugging convention based tests
@@ -245,14 +318,14 @@ running the debugger.
 
 ## Troubleshooting
 
-Use the `docker-compose` and `docker` utilities to control and troubleshoot
-containers. In the following examples `<profile>` is either `singlenode` or
-`multinode`.
+Use the `docker-compose` (probably using a [wrapper](#use-the-docker-compose-wrappers))
+and `docker` utilities to control and troubleshoot containers.
+In the following examples ``<profile>`` is [profile](#profile).
 
 1. Use the following command to view output from running containers:
 
     ```
-    docker-compose -f presto-product-tests/conf/docker/<profile>/docker-compose.yml logs
+    presto-product-tests/conf/docker/<profile>/compose.sh logs
     ```
 
 2. To connect to a running container in an interactive Bash shell to
@@ -272,8 +345,8 @@ been downloaded:
     ```
     # Stop Hadoop container (the down command stops and removes containers,
     # network, images, and volumes). This effectively resets the container.
-    docker-compose -f presto-product-tests/conf/docker/<profile>/docker-compose.yml down
+    presto-product-tests/conf/docker/<profile>/compose.sh down
     # Pull from Docker Hub to ensure the latest version of the image is
     # downloaded.
-    docker-compose -f presto-product-tests/conf/docker/<profile>/docker-compose.yml pull
+    presto-product-tests/conf/docker/<profile>/compose.sh pull
     ```

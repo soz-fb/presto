@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.hive.parquet;
 
+import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveColumnHandle;
 import com.facebook.presto.hive.HivePartitionKey;
 import com.facebook.presto.hive.HiveRecordCursor;
@@ -32,6 +33,7 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import io.airlift.slice.Slice;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
@@ -64,6 +66,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 
+import static com.facebook.presto.hive.HiveColumnHandle.ColumnType.REGULAR;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CURSOR_ERROR;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_MISSING_DATA;
@@ -72,10 +75,13 @@ import static com.facebook.presto.hive.HiveUtil.booleanPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.datePartitionKey;
 import static com.facebook.presto.hive.HiveUtil.doublePartitionKey;
 import static com.facebook.presto.hive.HiveUtil.getDecimalType;
+import static com.facebook.presto.hive.HiveUtil.getPrefilledColumnValue;
 import static com.facebook.presto.hive.HiveUtil.integerPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.longDecimalPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.shortDecimalPartitionKey;
+import static com.facebook.presto.hive.HiveUtil.smallintPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.timestampPartitionKey;
+import static com.facebook.presto.hive.HiveUtil.tinyintPartitionKey;
 import static com.facebook.presto.hive.HiveUtil.varcharPartitionKey;
 import static com.facebook.presto.hive.parquet.HdfsParquetDataSource.buildHdfsParquetDataSource;
 import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getParquetType;
@@ -90,10 +96,12 @@ import static com.facebook.presto.spi.type.Decimals.isLongDecimal;
 import static com.facebook.presto.spi.type.Decimals.isShortDecimal;
 import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 import static com.facebook.presto.spi.type.IntegerType.INTEGER;
+import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
 import static com.facebook.presto.spi.type.StandardTypes.ARRAY;
 import static com.facebook.presto.spi.type.StandardTypes.MAP;
 import static com.facebook.presto.spi.type.StandardTypes.ROW;
 import static com.facebook.presto.spi.type.TimestampType.TIMESTAMP;
+import static com.facebook.presto.spi.type.TinyintType.TINYINT;
 import static com.facebook.presto.spi.type.Varchars.isVarcharType;
 import static com.facebook.presto.spi.type.Varchars.truncateToLength;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -119,7 +127,7 @@ public class ParquetHiveRecordCursor
     private final String[] names;
     private final Type[] types;
 
-    private final boolean[] isPartitionColumn;
+    private final boolean[] isPrefilledColumn;
 
     private final boolean[] booleans;
     private final long[] longs;
@@ -134,6 +142,8 @@ public class ParquetHiveRecordCursor
     private boolean closed;
 
     public ParquetHiveRecordCursor(
+            HdfsEnvironment hdfsEnvironment,
+            String sessionUser,
             Configuration configuration,
             Path path,
             long start,
@@ -161,7 +171,7 @@ public class ParquetHiveRecordCursor
         this.names = new String[size];
         this.types = new Type[size];
 
-        this.isPartitionColumn = new boolean[size];
+        this.isPrefilledColumn = new boolean[size];
 
         this.booleans = new boolean[size];
         this.longs = new long[size];
@@ -182,54 +192,61 @@ public class ParquetHiveRecordCursor
             names[columnIndex] = columnName;
             types[columnIndex] = type;
 
-            boolean isPartitionKey = column.isPartitionKey();
-            isPartitionColumn[columnIndex] = isPartitionKey;
-            nullsRowDefault[columnIndex] = !isPartitionKey;
+            boolean isPrefilledColumn = column.isPartitionKey() || column.isHidden();
+            this.isPrefilledColumn[columnIndex] = isPrefilledColumn;
+            nullsRowDefault[columnIndex] = !isPrefilledColumn;
 
-            if (isPartitionKey) {
+            if (isPrefilledColumn) {
                 HivePartitionKey partitionKey = partitionKeysByName.get(columnName);
-                checkArgument(partitionKey != null, "Unknown partition key %s", columnName);
 
-                String partitionKeyValue = partitionKey.getValue();
-                byte[] bytes = partitionKeyValue.getBytes(UTF_8);
+                String columnValue = getPrefilledColumnValue(column, partitionKey, path);
+                byte[] bytes = columnValue.getBytes(UTF_8);
 
                 if (HiveUtil.isHiveNull(bytes)) {
                     nullsRowDefault[columnIndex] = true;
                 }
                 else if (type.equals(BOOLEAN)) {
-                    booleans[columnIndex] = booleanPartitionKey(partitionKeyValue, columnName);
+                    booleans[columnIndex] = booleanPartitionKey(columnValue, columnName);
                 }
                 else if (type.equals(INTEGER)) {
-                    longs[columnIndex] = integerPartitionKey(partitionKeyValue, columnName);
+                    longs[columnIndex] = integerPartitionKey(columnValue, columnName);
+                }
+                else if (type.equals(SMALLINT)) {
+                    longs[columnIndex] = smallintPartitionKey(columnValue, columnName);
+                }
+                else if (type.equals(TINYINT)) {
+                    longs[columnIndex] = tinyintPartitionKey(columnValue, columnName);
                 }
                 else if (type.equals(BIGINT)) {
-                    longs[columnIndex] = bigintPartitionKey(partitionKeyValue, columnName);
+                    longs[columnIndex] = bigintPartitionKey(columnValue, columnName);
                 }
                 else if (type.equals(DOUBLE)) {
-                    doubles[columnIndex] = doublePartitionKey(partitionKeyValue, columnName);
+                    doubles[columnIndex] = doublePartitionKey(columnValue, columnName);
                 }
                 else if (isVarcharType(type)) {
-                    slices[columnIndex] = varcharPartitionKey(partitionKeyValue, columnName, type);
+                    slices[columnIndex] = varcharPartitionKey(columnValue, columnName, type);
                 }
                 else if (type.equals(TIMESTAMP)) {
-                    longs[columnIndex] = timestampPartitionKey(partitionKey.getValue(), hiveStorageTimeZone, columnName);
+                    longs[columnIndex] = timestampPartitionKey(columnValue, hiveStorageTimeZone, columnName);
                 }
                 else if (type.equals(DATE)) {
-                    longs[columnIndex] = datePartitionKey(partitionKey.getValue(), columnName);
+                    longs[columnIndex] = datePartitionKey(columnValue, columnName);
                 }
                 else if (isShortDecimal(type)) {
-                    longs[columnIndex] = shortDecimalPartitionKey(partitionKey.getValue(), (DecimalType) type, columnName);
+                    longs[columnIndex] = shortDecimalPartitionKey(columnValue, (DecimalType) type, columnName);
                 }
                 else if (isLongDecimal(type)) {
-                    slices[columnIndex] = longDecimalPartitionKey(partitionKey.getValue(), (DecimalType) type, columnName);
+                    slices[columnIndex] = longDecimalPartitionKey(columnValue, (DecimalType) type, columnName);
                 }
                 else {
-                    throw new PrestoException(NOT_SUPPORTED, format("Unsupported column type %s for partition key: %s", type.getDisplayName(), columnName));
+                    throw new PrestoException(NOT_SUPPORTED, format("Unsupported column type %s for prefilled column: %s", type.getDisplayName(), columnName));
                 }
             }
         }
 
         this.recordReader = createParquetRecordReader(
+                hdfsEnvironment,
+                sessionUser,
                 configuration,
                 path,
                 start,
@@ -281,7 +298,7 @@ public class ParquetHiveRecordCursor
     {
         try {
             // reset null flags
-            System.arraycopy(nullsRowDefault, 0, nulls, 0, isPartitionColumn.length);
+            System.arraycopy(nullsRowDefault, 0, nulls, 0, isPrefilledColumn.length);
 
             if (closed || !recordReader.nextKeyValue()) {
                 close();
@@ -380,6 +397,8 @@ public class ParquetHiveRecordCursor
     }
 
     private ParquetRecordReader<FakeParquetRecord> createParquetRecordReader(
+            HdfsEnvironment hdfsEnvironment,
+            String sessionUser,
             Configuration configuration,
             Path path,
             long start,
@@ -390,8 +409,11 @@ public class ParquetHiveRecordCursor
             boolean predicatePushdownEnabled,
             TupleDomain<HiveColumnHandle> effectivePredicate)
     {
-        try (ParquetDataSource dataSource = buildHdfsParquetDataSource(path, configuration, start, length)) {
-            ParquetMetadata parquetMetadata = ParquetFileReader.readFooter(configuration, path, NO_FILTER);
+        ParquetDataSource dataSource = null;
+        try {
+            FileSystem fileSystem = hdfsEnvironment.getFileSystem(sessionUser, path, configuration);
+            dataSource = buildHdfsParquetDataSource(fileSystem, path, start, length);
+            ParquetMetadata parquetMetadata = hdfsEnvironment.doAs(sessionUser, () -> ParquetFileReader.readFooter(configuration, path, NO_FILTER));
             List<BlockMetaData> blocks = parquetMetadata.getBlocks();
             FileMetaData fileMetaData = parquetMetadata.getFileMetaData();
             MessageType fileSchema = fileMetaData.getSchema();
@@ -399,7 +421,7 @@ public class ParquetHiveRecordCursor
             PrestoReadSupport readSupport = new PrestoReadSupport(useParquetColumnNames, columns, fileSchema);
 
             List<parquet.schema.Type> fields = columns.stream()
-                    .filter(column -> !column.isPartitionKey())
+                    .filter(column -> column.getColumnType() == REGULAR)
                     .map(column -> getParquetType(column, fileSchema, useParquetColumnNames))
                     .filter(Objects::nonNull)
                     .collect(toList());
@@ -416,8 +438,9 @@ public class ParquetHiveRecordCursor
 
             if (predicatePushdownEnabled) {
                 ParquetPredicate parquetPredicate = buildParquetPredicate(columns, effectivePredicate, fileMetaData.getSchema(), typeManager);
+                ParquetDataSource finalDataSource = dataSource;
                 splitGroup = splitGroup.stream()
-                        .filter(block -> predicateMatches(parquetPredicate, block, dataSource, requestedSchema, effectivePredicate))
+                        .filter(block -> predicateMatches(parquetPredicate, block, finalDataSource, requestedSchema, effectivePredicate))
                         .collect(toList());
             }
 
@@ -430,11 +453,21 @@ public class ParquetHiveRecordCursor
             ParquetInputSplit split = new ParquetInputSplit(path, start, start + length, length, null, offsets);
 
             TaskAttemptContext taskContext = ContextUtil.newTaskAttemptContext(configuration, new TaskAttemptID());
-            ParquetRecordReader<FakeParquetRecord> realReader = new PrestoParquetRecordReader(readSupport);
-            realReader.initialize(split, taskContext);
-            return realReader;
+
+            return hdfsEnvironment.doAs(sessionUser, () -> {
+                ParquetRecordReader<FakeParquetRecord> realReader = new PrestoParquetRecordReader(readSupport);
+                realReader.initialize(split, taskContext);
+                return realReader;
+            });
         }
         catch (Exception e) {
+            if (dataSource != null) {
+                try {
+                    dataSource.close();
+                }
+                catch (IOException ignored) {
+                }
+            }
             if (e instanceof PrestoException) {
                 throw (PrestoException) e;
             }
@@ -474,7 +507,7 @@ public class ParquetHiveRecordCursor
             ImmutableList.Builder<Converter> converters = ImmutableList.builder();
             for (int i = 0; i < columns.size(); i++) {
                 HiveColumnHandle column = columns.get(i);
-                if (!column.isPartitionKey()) {
+                if (column.getColumnType() == REGULAR) {
                     parquet.schema.Type parquetType = getParquetType(column, messageType, useParquetColumnNames);
                     if (parquetType == null) {
                         continue;
@@ -504,7 +537,7 @@ public class ParquetHiveRecordCursor
                 MessageType messageType)
         {
             List<parquet.schema.Type> fields = columns.stream()
-                    .filter(column -> !column.isPartitionKey())
+                    .filter(column -> column.getColumnType() == REGULAR)
                     .map(column -> getParquetType(column, messageType, useParquetColumnNames))
                     .filter(Objects::nonNull)
                     .collect(toList());

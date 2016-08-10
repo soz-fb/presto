@@ -276,7 +276,7 @@ public class TestAnalyzer
         assertFails(MISSING_ATTRIBUTE, "SELECT * FROM t1 WHERE f > 1");
     }
 
-    @Test(expectedExceptions = SemanticException.class, expectedExceptionsMessageRegExp = "line 1:8: Column '\"t\".\"y\"' cannot be resolved")
+    @Test(expectedExceptions = SemanticException.class, expectedExceptionsMessageRegExp = "line 1:8: Column 't.y' cannot be resolved")
     public void testInvalidAttributeCorrectErrorMessage()
             throws Exception
     {
@@ -591,6 +591,9 @@ public class TestAnalyzer
         assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t7 (c) SELECT (d) FROM t7 ");
 
         analyze("INSERT INTO t7 (d) VALUES (ARRAY[null])");
+
+        analyze("INSERT INTO t6 (d) VALUES (1), (2), (3)");
+        analyze("INSERT INTO t6 (a,b,c,d) VALUES (1, 'a', 1, 1), (2, 'b', 2, 2), (3, 'c', 3, 3), (4, 'd', 4, 4)");
     }
 
     @Test
@@ -599,6 +602,16 @@ public class TestAnalyzer
     {
         assertFails(MISSING_TABLE, "INSERT INTO foo VALUES (1)");
         assertFails(NOT_SUPPORTED, "INSERT INTO v1 VALUES (1)");
+
+        // fail if inconsistent fields count
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t1 (a) VALUES (1), (1, 2)");
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t1 (a, b) VALUES (1), (1, 2)");
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t1 (a, b) VALUES (1, 2), (1, 2), (1, 2, 3)");
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t1 (a, b) VALUES ('a', 'b'), ('a', 'b', 'c')");
+
+        // fail if mismatched column types
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t1 (a, b) VALUES ('a', 'b'), (1, 'b')");
+        assertFails(MISMATCHED_SET_COLUMN_TYPES, "INSERT INTO t1 (a, b) VALUES ('a', 'b'), ('a', 'b'), (1, 'b')");
     }
 
     @Test
@@ -664,6 +677,9 @@ public class TestAnalyzer
         assertFails(TYPE_MISMATCH, "SELECT CAST(date '2014-01-01' AS bigint)");
         assertFails(TYPE_MISMATCH, "SELECT TRY_CAST(date '2014-01-01' AS bigint)");
         assertFails(TYPE_MISMATCH, "SELECT CAST(null AS UNKNOWN)");
+        assertFails(TYPE_MISMATCH, "SELECT CAST(1 AS MAP)");
+        assertFails(TYPE_MISMATCH, "SELECT CAST(1 AS ARRAY)");
+        assertFails(TYPE_MISMATCH, "SELECT CAST(1 AS ROW)");
 
         // arithmetic unary
         assertFails(TYPE_MISMATCH, "SELECT -'a' FROM t1");

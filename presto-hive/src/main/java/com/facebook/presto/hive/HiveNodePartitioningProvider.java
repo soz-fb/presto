@@ -23,10 +23,11 @@ import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
 import com.facebook.presto.spi.type.Type;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 
 import javax.inject.Inject;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -42,12 +43,14 @@ public class HiveNodePartitioningProvider
 {
     private final String connectorId;
     private final NodeManager nodeManager;
+    private final boolean forceIntegralToBigint;
 
     @Inject
-    public HiveNodePartitioningProvider(HiveConnectorId connectorId, NodeManager nodeManager)
+    public HiveNodePartitioningProvider(HiveConnectorId connectorId, HiveClientConfig hiveClientConfig, NodeManager nodeManager)
     {
         this.connectorId = requireNonNull(connectorId, "connectorId is null").toString();
         this.nodeManager = requireNonNull(nodeManager, "nodeManager is null");
+        this.forceIntegralToBigint = requireNonNull(hiveClientConfig, "hiveClientConfig is null").isForceIntegralToBigint();
     }
 
     @Override
@@ -60,7 +63,7 @@ public class HiveNodePartitioningProvider
     {
         HivePartitioningHandle handle = checkType(partitioningHandle, HivePartitioningHandle.class, "partitioningHandle");
         List<HiveType> hiveTypes = handle.getHiveTypes();
-        return new HiveBucketFunction(bucketCount, hiveTypes);
+        return new HiveBucketFunction(bucketCount, hiveTypes, forceIntegralToBigint);
     }
 
     @Override
@@ -89,9 +92,9 @@ public class HiveNodePartitioningProvider
         return value -> checkType(value, HiveSplit.class, "value").getBucketNumber().getAsInt();
     }
 
-    private static <T> List<T> shuffle(Iterable<T> iterable)
+    private static <T> List<T> shuffle(Collection<T> items)
     {
-        List<T> list = Lists.newArrayList(iterable);
+        List<T> list = new ArrayList<>(items);
         Collections.shuffle(list);
         return list;
     }

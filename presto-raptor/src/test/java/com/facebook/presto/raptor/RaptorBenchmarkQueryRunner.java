@@ -15,15 +15,13 @@ package com.facebook.presto.raptor;
 
 import com.facebook.presto.Session;
 import com.facebook.presto.benchmark.BenchmarkSuite;
-import com.facebook.presto.block.BlockEncodingManager;
 import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.spi.NodeManager;
-import com.facebook.presto.spi.block.BlockEncodingSerde;
 import com.facebook.presto.spi.connector.ConnectorFactory;
-import com.facebook.presto.spi.type.TypeManager;
+import com.facebook.presto.spi.connector.ConnectorFactoryContext;
 import com.facebook.presto.testing.LocalQueryRunner;
+import com.facebook.presto.testing.TestingConnectorFactoryContext;
 import com.facebook.presto.tpch.TpchConnectorFactory;
-import com.facebook.presto.type.TypeRegistry;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 
@@ -90,17 +88,20 @@ public final class RaptorBenchmarkQueryRunner
                     .put("storage.compress", "false")
                     .build();
 
-            TypeManager typeManager = new TypeRegistry();
-            BlockEncodingSerde blockEncodingSerde = new BlockEncodingManager(typeManager);
-
             RaptorPlugin plugin = new RaptorPlugin();
 
             plugin.setOptionalConfig(config);
-            plugin.setNodeManager(nodeManager);
-            plugin.setBlockEncodingSerde(blockEncodingSerde);
-            plugin.setTypeManager(typeManager);
 
-            return getOnlyElement(plugin.getServices(ConnectorFactory.class));
+            ConnectorFactoryContext context = new TestingConnectorFactoryContext()
+            {
+                @Override
+                public NodeManager getNodeManager()
+                {
+                    return nodeManager;
+                }
+            };
+
+            return getOnlyElement(plugin.getConnectorFactories(context));
         }
         catch (Exception e) {
             throw Throwables.propagate(e);

@@ -32,8 +32,8 @@ import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SchemaTablePrefix;
 import com.facebook.presto.spi.block.BlockEncodingSerde;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
-import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
 import com.facebook.presto.spi.connector.ConnectorTransactionHandle;
+import com.facebook.presto.spi.function.OperatorType;
 import com.facebook.presto.spi.predicate.NullableValue;
 import com.facebook.presto.spi.predicate.TupleDomain;
 import com.facebook.presto.spi.security.Privilege;
@@ -49,11 +49,9 @@ import com.facebook.presto.type.TypeRegistry;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.google.common.base.Joiner;
 import com.google.common.collect.HashMultimap;
-import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import io.airlift.json.JsonCodec;
 import io.airlift.json.JsonCodecFactory;
@@ -78,21 +76,20 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.function.Predicate;
 
 import static com.facebook.presto.metadata.MetadataUtil.checkCatalogName;
-import static com.facebook.presto.metadata.OperatorType.BETWEEN;
-import static com.facebook.presto.metadata.OperatorType.EQUAL;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN;
-import static com.facebook.presto.metadata.OperatorType.GREATER_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.HASH_CODE;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN;
-import static com.facebook.presto.metadata.OperatorType.LESS_THAN_OR_EQUAL;
-import static com.facebook.presto.metadata.OperatorType.NOT_EQUAL;
 import static com.facebook.presto.metadata.QualifiedObjectName.convertFromSchemaTableName;
 import static com.facebook.presto.metadata.TableLayout.fromConnectorLayout;
 import static com.facebook.presto.metadata.ViewDefinition.ViewColumn;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_VIEW;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_FOUND;
-import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.spi.StandardErrorCode.SYNTAX_ERROR;
+import static com.facebook.presto.spi.function.OperatorType.BETWEEN;
+import static com.facebook.presto.spi.function.OperatorType.EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN;
+import static com.facebook.presto.spi.function.OperatorType.GREATER_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.HASH_CODE;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN;
+import static com.facebook.presto.spi.function.OperatorType.LESS_THAN_OR_EQUAL;
+import static com.facebook.presto.spi.function.OperatorType.NOT_EQUAL;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.transaction.TransactionManager.createTestTransactionManager;
@@ -140,7 +137,7 @@ public class MetadataManager
             TablePropertyManager tablePropertyManager,
             TransactionManager transactionManager)
     {
-        functions = new FunctionRegistry(typeManager, blockEncodingSerde, featuresConfig.isExperimentalSyntaxEnabled());
+        functions = new FunctionRegistry(typeManager, blockEncodingSerde, featuresConfig);
         procedures = new ProcedureRegistry();
         this.typeManager = requireNonNull(typeManager, "types is null");
         this.viewCodec = requireNonNull(viewCodec, "viewCodec is null");
@@ -486,34 +483,16 @@ public class MetadataManager
     }
 
     @Override
-    public Optional<NewTableLayout> getInsertLayout(Session session, TableHandle target)
+    public Optional<NewTableLayout> getInsertLayout(Session session, TableHandle table)
     {
-        List<TableLayout> layouts = getLayouts(session, target, new Constraint<>(TupleDomain.all(), map -> true), Optional.empty())
-                .stream()
-                .map(TableLayoutResult::getLayout)
-                .filter(layout -> layout.getNodePartitioning().isPresent())
-                .collect(toImmutableList());
+        ConnectorEntry entry = getConnectorMetadata(table.getConnectorId());
 
-        if (layouts.isEmpty()) {
+        Optional<ConnectorNewTableLayout> insertLayout = entry.getMetadataForWrite(session).getInsertLayout(session.toConnectorSession(entry.getCatalog()), table.getConnectorHandle());
+        if (!insertLayout.isPresent()) {
             return Optional.empty();
         }
 
-        if (layouts.size() > 1) {
-            throw new PrestoException(NOT_SUPPORTED, "Tables with multiple layouts can not be written");
-        }
-
-        TableLayout layout = Iterables.getOnlyElement(layouts);
-        ConnectorPartitioningHandle partitioningHandle = layout.getNodePartitioning().get().getPartitioningHandle().getConnectorHandle();
-
-        Map<ColumnHandle, String> columnNamesByHandle = ImmutableBiMap.copyOf(getColumnHandles(session, target)).inverse();
-        List<String> partitionColumns = layout.getNodePartitioning().get().getPartitioningColumns().stream()
-                .map(columnNamesByHandle::get)
-                .collect(toImmutableList());
-
-        return Optional.of(new NewTableLayout(
-                layout.getConnectorId(),
-                lookupConnectorFor(target).getTransactionHandle(session),
-                new ConnectorNewTableLayout(partitioningHandle, partitionColumns)));
+        return Optional.of(new NewTableLayout(entry.getConnectorId(), entry.getTransactionHandle(session), insertLayout.get()));
     }
 
     @Override
@@ -711,6 +690,15 @@ public class MetadataManager
         checkArgument(entry != null, "Catalog %s does not exist", tableName.getCatalogName());
         ConnectorMetadata metadata = entry.getMetadata(session);
         metadata.grantTablePrivileges(session.toConnectorSession(entry.getCatalog()), tableName.asSchemaTableName(), privileges, grantee, grantOption);
+    }
+
+    @Override
+    public void revokeTablePrivileges(Session session, QualifiedObjectName tableName, Set<Privilege> privileges, String grantee, boolean grantOption)
+    {
+        ConnectorEntry entry = connectorsByCatalog.get(tableName.getCatalogName());
+        checkArgument(entry != null, "Catalog %s does not exist", tableName.getCatalogName());
+        ConnectorMetadata metadata = entry.getMetadata(session);
+        metadata.revokeTablePrivileges(session.toConnectorSession(entry.getCatalog()), tableName.asSchemaTableName(), privileges, grantee, grantOption);
     }
 
     @Override

@@ -15,6 +15,7 @@ package com.facebook.presto.jdbc;
 
 import com.facebook.presto.plugin.blackhole.BlackHolePlugin;
 import com.facebook.presto.server.testing.TestingPrestoServer;
+import com.facebook.presto.spi.type.TimeZoneKey;
 import com.facebook.presto.tpch.TpchMetadata;
 import com.facebook.presto.tpch.TpchPlugin;
 import com.google.common.collect.ImmutableList;
@@ -27,6 +28,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.sql.Connection;
 import java.sql.Date;
 import java.sql.DriverManager;
@@ -42,6 +44,7 @@ import java.util.ArrayList;
 import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Set;
+import java.util.TimeZone;
 
 import static io.airlift.testing.Assertions.assertInstanceOf;
 import static java.lang.String.format;
@@ -108,10 +111,11 @@ public class TestDriver
                         ", cast('hello' as varbinary) _varbinary" +
                         ", DECIMAL '1234567890.1234567' _decimal_short" +
                         ", DECIMAL '.12345678901234567890123456789012345678' _decimal_long" +
-                        ", approx_set(42) _hll")) {
+                        ", approx_set(42) _hll" +
+                        ", cast('foo' as char(5)) _char")) {
                     ResultSetMetaData metadata = rs.getMetaData();
 
-                    assertEquals(metadata.getColumnCount(), 9);
+                    assertEquals(metadata.getColumnCount(), 10);
 
                     assertEquals(metadata.getColumnLabel(1), "_integer");
                     assertEquals(metadata.getColumnType(1), Types.INTEGER);
@@ -139,6 +143,9 @@ public class TestDriver
 
                     assertEquals(metadata.getColumnLabel(9), "_hll");
                     assertEquals(metadata.getColumnType(9), Types.JAVA_OBJECT);
+
+                    assertEquals(metadata.getColumnLabel(10), "_char");
+                    assertEquals(metadata.getColumnType(10), Types.CHAR);
 
                     assertTrue(rs.next());
 
@@ -198,6 +205,11 @@ public class TestDriver
                     assertInstanceOf(rs.getObject("_hll"), byte[].class);
                     assertInstanceOf(rs.getBytes(9), byte[].class);
                     assertInstanceOf(rs.getBytes("_hll"), byte[].class);
+
+                    assertEquals(rs.getObject(10), "foo  ");
+                    assertEquals(rs.getObject("_char"), "foo  ");
+                    assertEquals(rs.getString(10), "foo  ");
+                    assertEquals(rs.getString("_char"), "foo  ");
 
                     assertFalse(rs.next());
                 }
@@ -1065,6 +1077,32 @@ public class TestDriver
     }
 
     @Test
+    public void testSetTimeZoneId()
+            throws Exception
+    {
+        TimeZoneKey defaultZoneKey = TimeZoneKey.getTimeZoneKey(TimeZone.getDefault().getID());
+        DateTimeZone defaultZone = DateTimeZone.forTimeZone(TimeZone.getDefault());
+        String sql = "SELECT current_timezone() zone, TIMESTAMP '2001-02-03 3:04:05' ts";
+
+        try (Connection connection = createConnection()) {
+            try (Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery(sql)) {
+                assertTrue(rs.next());
+                assertEquals(rs.getString("zone"), defaultZoneKey.getId());
+                assertEquals(rs.getTimestamp("ts"), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5, defaultZone).getMillis()));
+            }
+
+            connection.unwrap(PrestoConnection.class).setTimeZoneId("UTC");
+            try (Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery(sql)) {
+                assertTrue(rs.next());
+                assertEquals(rs.getString("zone"), "UTC");
+                assertEquals(rs.getTimestamp("ts"), new Timestamp(new DateTime(2001, 2, 3, 3, 4, 5, DateTimeZone.UTC).getMillis()));
+            }
+        }
+    }
+
+    @Test
     public void testConnectionStringWithCatalogAndSchema()
             throws Exception
     {
@@ -1137,6 +1175,18 @@ public class TestDriver
                     assertEquals(rs.getString("table_catalog"), TEST_CATALOG);
                 }
             }
+        }
+    }
+
+    @Test
+    public void testConnectionWithSSL()
+            throws Exception
+    {
+        String url = format("jdbc:presto://some-ssl-server:443/%s", "blackhole");
+        try (PrestoConnection connection = (PrestoConnection) DriverManager.getConnection(url, "test", null)) {
+            URI uri = connection.getHttpUri();
+            assertEquals(uri.getPort(), 443);
+            assertEquals(uri.getScheme(), "https");
         }
     }
 

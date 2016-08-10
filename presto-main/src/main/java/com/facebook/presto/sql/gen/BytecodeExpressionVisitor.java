@@ -35,10 +35,12 @@ import static com.facebook.presto.bytecode.instruction.Constant.loadString;
 import static com.facebook.presto.sql.gen.BytecodeUtils.loadConstant;
 import static com.facebook.presto.sql.relational.Signatures.CAST;
 import static com.facebook.presto.sql.relational.Signatures.COALESCE;
+import static com.facebook.presto.sql.relational.Signatures.DEREFERENCE;
 import static com.facebook.presto.sql.relational.Signatures.IF;
 import static com.facebook.presto.sql.relational.Signatures.IN;
 import static com.facebook.presto.sql.relational.Signatures.IS_NULL;
 import static com.facebook.presto.sql.relational.Signatures.NULL_IF;
+import static com.facebook.presto.sql.relational.Signatures.ROW_CONSTRUCTOR;
 import static com.facebook.presto.sql.relational.Signatures.SWITCH;
 import static com.facebook.presto.sql.relational.Signatures.TRY;
 
@@ -109,6 +111,12 @@ public class BytecodeExpressionVisitor
                     break;
                 case "OR":
                     generator = new OrCodeGenerator();
+                    break;
+                case DEREFERENCE:
+                    generator = new DereferenceCodeGenerator();
+                    break;
+                case ROW_CONSTRUCTOR:
+                    generator = new RowConstructorCodeGenerator();
                     break;
                 default:
                     generator = new FunctionCallCodeGenerator();

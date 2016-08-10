@@ -13,13 +13,14 @@
  */
 package com.facebook.presto.hive;
 
-import com.facebook.presto.hive.metastore.HiveMetastore;
+import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
 import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.NodeManager;
 import com.facebook.presto.spi.PageIndexerFactory;
 import com.facebook.presto.spi.classloader.ThreadContextClassLoader;
 import com.facebook.presto.spi.connector.Connector;
 import com.facebook.presto.spi.connector.ConnectorAccessControl;
+import com.facebook.presto.spi.connector.ConnectorContext;
 import com.facebook.presto.spi.connector.ConnectorFactory;
 import com.facebook.presto.spi.connector.ConnectorNodePartitioningProvider;
 import com.facebook.presto.spi.connector.ConnectorPageSinkProvider;
@@ -46,6 +47,12 @@ import java.util.Map;
 
 import static com.facebook.presto.hive.ConditionalModule.installModuleIf;
 import static com.facebook.presto.hive.SecurityConfig.ALLOW_ALL_ACCESS_CONTROL;
+import static com.facebook.presto.hive.authentication.AuthenticationModules.kerberosHdfsAuthenticationModule;
+import static com.facebook.presto.hive.authentication.AuthenticationModules.kerberosHiveMetastoreAuthenticationModule;
+import static com.facebook.presto.hive.authentication.AuthenticationModules.kerberosImpersonatingHdfsAuthenticationModule;
+import static com.facebook.presto.hive.authentication.AuthenticationModules.noHdfsAuthenticationModule;
+import static com.facebook.presto.hive.authentication.AuthenticationModules.noHiveMetastoreAuthenticationModule;
+import static com.facebook.presto.hive.authentication.AuthenticationModules.simpleImpersonatingHdfsAuthenticationModule;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.isNullOrEmpty;
 import static java.util.Objects.requireNonNull;
@@ -56,7 +63,7 @@ public class HiveConnectorFactory
     private final String name;
     private final Map<String, String> optionalConfig;
     private final ClassLoader classLoader;
-    private final HiveMetastore metastore;
+    private final ExtendedHiveMetastore metastore;
     private final TypeManager typeManager;
     private final PageIndexerFactory pageIndexerFactory;
     private final NodeManager nodeManager;
@@ -65,7 +72,7 @@ public class HiveConnectorFactory
             String name,
             Map<String, String> optionalConfig,
             ClassLoader classLoader,
-            HiveMetastore metastore,
+            ExtendedHiveMetastore metastore,
             TypeManager typeManager,
             PageIndexerFactory pageIndexerFactory,
             NodeManager nodeManager)
@@ -93,7 +100,7 @@ public class HiveConnectorFactory
     }
 
     @Override
-    public Connector create(String connectorId, Map<String, String> config)
+    public Connector create(String connectorId, Map<String, String> config, ConnectorContext context)
     {
         requireNonNull(config, "config is null");
 
@@ -115,6 +122,34 @@ public class HiveConnectorFactory
                             SecurityConfig.class,
                             security -> "sql-standard".equalsIgnoreCase(security.getSecuritySystem()),
                             new SqlStandardSecurityModule()),
+                    installModuleIf(
+                            HiveClientConfig.class,
+                            hiveClientConfig -> hiveClientConfig.getHiveMetastoreAuthenticationType() == HiveClientConfig.HiveMetastoreAuthenticationType.NONE,
+                            noHiveMetastoreAuthenticationModule()),
+                    installModuleIf(
+                            HiveClientConfig.class,
+                            hiveClientConfig -> hiveClientConfig.getHiveMetastoreAuthenticationType() == HiveClientConfig.HiveMetastoreAuthenticationType.KERBEROS,
+                            kerberosHiveMetastoreAuthenticationModule()),
+                    installModuleIf(
+                            HiveClientConfig.class,
+                            configuration -> configuration.getHdfsAuthenticationType() == HiveClientConfig.HdfsAuthenticationType.NONE &&
+                                    !configuration.isHdfsImpersonationEnabled(),
+                            noHdfsAuthenticationModule()),
+                    installModuleIf(
+                            HiveClientConfig.class,
+                            configuration -> configuration.getHdfsAuthenticationType() == HiveClientConfig.HdfsAuthenticationType.NONE &&
+                                    configuration.isHdfsImpersonationEnabled(),
+                            simpleImpersonatingHdfsAuthenticationModule()),
+                    installModuleIf(
+                            HiveClientConfig.class,
+                            configuration -> configuration.getHdfsAuthenticationType() == HiveClientConfig.HdfsAuthenticationType.KERBEROS &&
+                                    !configuration.isHdfsImpersonationEnabled(),
+                            kerberosHdfsAuthenticationModule()),
+                    installModuleIf(
+                            HiveClientConfig.class,
+                            configuration -> configuration.getHdfsAuthenticationType() == HiveClientConfig.HdfsAuthenticationType.KERBEROS &&
+                                    configuration.isHdfsImpersonationEnabled(),
+                            kerberosImpersonatingHdfsAuthenticationModule()),
                     binder -> {
                         MBeanServer platformMBeanServer = ManagementFactory.getPlatformMBeanServer();
                         binder.bind(MBeanServer.class).toInstance(new RebindSafeMBeanServer(platformMBeanServer));

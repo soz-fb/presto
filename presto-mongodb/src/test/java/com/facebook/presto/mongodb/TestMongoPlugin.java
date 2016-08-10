@@ -15,10 +15,12 @@ package com.facebook.presto.mongodb;
 
 import com.facebook.presto.spi.Connector;
 import com.facebook.presto.spi.ConnectorFactory;
+import com.facebook.presto.spi.connector.ConnectorContext;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeManager;
 import com.facebook.presto.spi.type.TypeSignature;
 import com.facebook.presto.spi.type.TypeSignatureParameter;
+import com.facebook.presto.testing.TestingConnectorFactoryContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import de.bwaldvogel.mongo.MongoServer;
@@ -54,11 +56,11 @@ public class TestMongoPlugin
             throws Exception
     {
         MongoPlugin plugin = new MongoPlugin();
-        plugin.setTypeManager(new TestingTypeManager());
-        ConnectorFactory factory = getOnlyElement(plugin.getServices(ConnectorFactory.class));
-        Connector connector = factory.create("test", ImmutableMap.of("mongodb.seeds", seed));
 
-        Type type = getOnlyElement(plugin.getServices(Type.class));
+        ConnectorFactory factory = getOnlyElement(plugin.getLegacyConnectorFactories(new TestingConnectorFactoryContext()));
+        Connector connector = factory.create("test", ImmutableMap.of("mongodb.seeds", seed), new ConnectorContext() {});
+
+        Type type = getOnlyElement(plugin.getTypes());
         assertEquals(type, OBJECT_ID);
 
         connector.shutdown();
@@ -86,12 +88,6 @@ public class TestMongoPlugin
         }
 
         @Override
-        public Type getParameterizedType(String baseTypeName, List<TypeSignature> typeParameters, List<String> literalParameters)
-        {
-            return null;
-        }
-
-        @Override
         public List<Type> getTypes()
         {
             return ImmutableList.of();
@@ -99,6 +95,18 @@ public class TestMongoPlugin
 
         @Override
         public Optional<Type> getCommonSuperType(List<? extends Type> types)
+        {
+            return Optional.empty();
+        }
+
+        @Override
+        public boolean isTypeOnlyCoercion(Type actualType, Type expectedType)
+        {
+            return false;
+        }
+
+        @Override
+        public Optional<Type> coerceTypeBase(Type sourceType, String resultTypeBase)
         {
             return Optional.empty();
         }
